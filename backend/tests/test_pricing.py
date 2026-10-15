@@ -39,6 +39,25 @@ def test_all_missing_returns_none(tmp_path):
     assert pricing.price_item(conn, eggs) is None
 
 
+def test_generic_estimate_fallback_skips_category_tagged_rows(tmp_path):
+    """A category-tagged generic row (item_id IS NULL, category NOT NULL)
+    must NOT resolve via the generic fallback (review finding)."""
+    conn = _fresh_conn(tmp_path)
+    eggs = items.get_or_create(conn, "eggs")
+    pricing.set_estimate(conn, None, "household", 9.99, "USD")
+    assert pricing.price_item(conn, eggs) is None
+
+
+def test_generic_estimate_fallback_matches_true_generic_rows(tmp_path):
+    """A true generic estimate (item_id IS NULL AND category IS NULL)
+    must still resolve via the generic fallback."""
+    conn = _fresh_conn(tmp_path)
+    eggs = items.get_or_create(conn, "eggs")
+    pricing.set_estimate(conn, None, "household", 9.99, "USD")
+    pricing.set_estimate(conn, None, None, 3.25, "USD")
+    assert pricing.price_item(conn, eggs) == (3.25, "estimate")
+
+
 def test_make_lookup_parses_response():
     class FakeResponse:
         def json(self):

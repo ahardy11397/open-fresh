@@ -65,6 +65,7 @@ def _estimate(conn: sqlite3.Connection, item_id: int) -> tuple[float, str] | Non
     if row is None:
         row = conn.execute(
             "SELECT price FROM price_estimates WHERE item_id IS NULL"
+            " AND category IS NULL"
             " ORDER BY id DESC LIMIT 1"
         ).fetchone()
     if row is None:
