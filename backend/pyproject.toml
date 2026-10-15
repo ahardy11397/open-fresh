@@ -9,6 +9,9 @@ dependencies = [
     "httpx",
 ]
 
+[project.scripts]
+openfresh = "openfresh.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest",
