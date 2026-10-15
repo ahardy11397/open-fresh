@@ -69,18 +69,25 @@ shared/social layer between instances.
 - **[owner]** Stack: React frontend (mobile and desktop friendly),
   Python backend, CLI alongside.
 - **[owner]** Recipe extraction runs on local, small models — Gemma-class
-  edge models, E2B/E4B size (owner names them "Gemma 4 e2b/e4b"; verify
-  the exact model at implementation time — the well-known models at those
-  sizes are Gemma 3n E2B/E4B). Extraction must run on a modest GPU or
-  CPU; it must not require a datacenter.
-- **[owner]** Decision-making model (auto-planning, substitutions,
-  merging): a local LLM named "Laya" — verify the exact model before
-  implementation.
-- **[builder's call, default recorded]** The app talks to models over an
-  OpenAI-compatible HTTP endpoint configured by the user (e.g. a
-  llama.cpp server on localhost:8080). Models run OUTSIDE the app
-  container. This keeps the stack LLM-agnostic and avoids GPU
-  passthrough in the container.
+  edge models, E2B/E4B size (owner names them "Gemma 4 e2b/e4b"; the
+  well-known models at those sizes are Gemma 3n E2B/E4B). Extraction must
+  run on a modest GPU or CPU; it must not require a datacenter.
+- **[owner]** Decision-making: [Laya](https://github.com/receptron/laya)
+  (Convai Innovations) — an open-source "System 1" decision model, not a
+  text generator. Given a state (e.g. JSON of the week's candidate
+  recipes and constraints) plus typed questions, it returns calibrated
+  answers in one forward pass: `choice` (pick an option, with
+  probabilities), `score` (expected level on an ordered rubric), `noul`
+  (calibrated P(true)). Runs on ONNX Runtime (~1.7 GB fp32 weights,
+  ~140 ms per batched call on CPU — no GPU). The Python backend runs it
+  in-process via onnxruntime; a reference Python API
+  (`RLAgent.system_one`) exists. Limits: options must fit ~192 tokens,
+  state ~512 tokens, under ~20 options per choice question.
+- **[builder's call, default recorded]** The extraction LLM runs OUTSIDE
+  the app container behind an OpenAI-compatible HTTP endpoint configured
+  by the user (e.g. a llama.cpp server on localhost:8080). This keeps the
+  stack LLM-agnostic and avoids GPU passthrough in the container. Laya is
+  the exception — it runs in-process (see above).
 - **[owner]** Price data: Open Prices (openfoodfacts/open-prices), used
   as one layer of the pricing model, not the foundation (see below).
 - **[owner]** Distribution: Docker Compose. App + frontend + SQLite in a
@@ -121,6 +128,14 @@ names and prices; matched items update the kitchen's price library and
 record actual spend against the budget. This is the mechanism that makes
 the budget correlation real without manual entry. It uses the same
 extraction model/endpoint as recipe ingest.
+
+## Cooking and consumption [owner]
+
+A planned meal is consumed when a household member marks it cooked — a
+check-off in the calendar — and that check-off deducts the meal's
+ingredients from pantry/fridge/freezer. Removing a meal from the plan
+simply removes it; already-consumed inventory is not restored. There is
+no auto-consumption on the planned day.
 
 ## Recipe ingest pipeline
 
@@ -169,10 +184,38 @@ container instance or native run identically.
 - SQLite schema (single-file DB per kitchen, WAL mode suggested).
 - The extraction prompt engineering and confidence-flagging mechanics.
 - Auto-populate planning logic (respect meals/week, day preferences,
-  budget pressure, recipe rotation) — the decision-making model's exact
-  role vs. deterministic rules is a builder's call; both are allowed.
+  budget pressure, recipe rotation): deterministic rules frame the
+  problem and apply hard constraints; Laya answers the judgment calls
+  (`choice` over candidate recipes, `score` for budget pressure, `noul`
+  for edge cases). Laya's answer types follow its question types, so the
+  caller decides per question type.
 - Deployment details: Compose file, volume layout, health checks.
+
+## Calls from the builder check [builder's call]
+
+The builder-check review raised six questions. Four were settled as
+design calls; two went to the owner and their answers are recorded above
+(Laya, cooking/consumption). The four calls:
+
+1. **Servings scale to household size.** Settings gains a household-size
+   value with a per-meal override; recipe quantities are multiplied to
+   feed the table before list generation and inventory consumption.
+2. **Unit handling stays coarse.** Recipes keep their own units;
+   identical units merge and sum; no dimensional conversion tables
+   (grams-to-cups etc.). Inventory is have/need with rough quantities,
+   refined only where trivial. Package-size rounding at the store is a
+   best-effort nicety, not a core feature.
+3. **Substitutions are out of scope for v1.** The decision model's job is
+   auto-planning and merging; a substitution feature needs its own
+   design (trigger, source of swaps, UI) before it earns a place.
+4. **Staples get a "never list" flag.** Items like salt, oil, and spices
+   are flagged and stay off the grocery list without needing inventory
+   counts.
 
 ## Open questions
 
-Filled after the builder check; see the review round.
+None outstanding — the builder check is resolved. Two names to double
+check at implementation time: the owner's "Gemma 4 e2b/e4b" maps to the
+Gemma 3n E2B/E4B checkpoints; Laya's exact checkpoint variant (the
+receptron/laya ONNX bundle has a multilingual subfolder) is a
+builder's choice.
