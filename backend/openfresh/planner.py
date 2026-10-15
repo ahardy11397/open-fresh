@@ -13,7 +13,15 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from openfresh import inventory, recipes, settings
+from openfresh import inventory, pricing, recipes, settings
+
+MEALS_PER_WEEK_KEY = "meals_per_week"
+MEALS_PER_WEEK_DEFAULT = 5
+PREFERRED_DAYS_KEY = "preferred_days"
+PREFERRED_DAYS_DEFAULT = "mon,tue,wed,thu,fri,sat,sun"
+
+# Day abbreviations (as stored in the preferred_days setting) to weekday().
+_DAY_INDEX = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
 def _scaled_ingredients(
@@ -130,3 +138,145 @@ def list_entries(
         params = (int(cooked),)
     query += " ORDER BY date, plan_entries.id"
     return [dict(row) for row in conn.execute(query, params)]
+
+
+def _recipe_estimate(
+    conn: sqlite3.Connection, recipe_id: int
+) -> float:
+    """Estimated cost of cooking a recipe for the household size.
+
+    Scales the same way listgen does (household_size / recipe servings) and
+    prices each quantified ingredient via ``pricing.price_item``. Unpriced or
+    unquantified ingredients contribute 0. Missing recipe yields 0.0.
+    """
+    recipe = recipes.get_recipe(conn, recipe_id)
+    if recipe is None:
+        return 0.0
+    scale = settings.get_household_size(conn) / recipe["servings"]
+    total = 0.0
+    for ing in recipe["ingredients"]:
+        if ing["quantity"] is None or ing["item_id"] is None:
+            continue
+        priced = pricing.price_item(conn, ing["item_id"])
+        if priced is None:
+            continue
+        total += priced[0] * ing["quantity"] * scale
+    return total
+
+
+def _round_robin_pick(
+    conn: sqlite3.Connection,
+    all_recipes: list[dict],
+    budget_target: float | None,
+    week_cost: float,
+) -> dict | None:
+    """Pick the least-recently-planned recipe that fits the budget.
+
+    Never-planned recipes come first (by id), then recipes ordered by their
+    most recent plan date (oldest first) — cycling round-robin. With a budget
+    in force, the first candidate whose estimated cost would NOT push the week
+    over budget wins; if every candidate would, return None.
+    """
+    def key(recipe: dict):
+        row = conn.execute(
+            "SELECT MAX(date) AS last FROM plan_entries WHERE recipe_id = ?",
+            (recipe["id"],),
+        ).fetchone()
+        last = row["last"]
+        return (0, "", recipe["id"]) if last is None else (1, last, recipe["id"])
+
+    for recipe in sorted(all_recipes, key=key):
+        if budget_target is None:
+            return recipe
+        if week_cost + _recipe_estimate(conn, recipe["id"]) <= budget_target:
+            return recipe
+    return None
+
+
+def auto_populate(
+    conn: sqlite3.Connection,
+    week_start: str,
+    chooser=None,
+) -> list[int]:
+    """Deterministically fill the week up to ``meals_per_week`` entries.
+
+    Fills uncooked entries up to the ``meals_per_week`` setting (default 5) on
+    the household's ``preferred_days`` (default "mon,tue,wed,thu,fri,sat,sun",
+    filled in listed order), skipping dates that already hold an entry.
+    Recipes cycle round-robin by least-recently-planned. Budget pressure defers
+    an expensive recipe ONLY when a ``budgets`` row exists for this week_start
+    and its target is > 0; estimates are allowed otherwise.
+
+    ``chooser(conn, candidates, context) -> dict | None`` is consulted first
+    per slot; its pick is used as-is, and None falls back to round-robin.
+
+    Returns the ids of the created entries.
+    """
+    start = date.fromisoformat(week_start)
+    end = start + timedelta(days=7)
+
+    raw_meals = settings.get_setting(conn, MEALS_PER_WEEK_KEY)
+    meals_per_week = (
+        MEALS_PER_WEEK_DEFAULT if raw_meals is None else int(raw_meals)
+    )
+    raw_days = settings.get_setting(
+        conn, PREFERRED_DAYS_KEY, PREFERRED_DAYS_DEFAULT
+    )
+    preferred = [
+        day.strip().lower()
+        for day in (raw_days or "").split(",")
+        if day.strip()
+    ]
+
+    existing = [
+        dict(row)
+        for row in conn.execute(
+            """SELECT id, recipe_id, date, cooked
+               FROM plan_entries WHERE date >= ? AND date < ?""",
+            (start.isoformat(), end.isoformat()),
+        )
+    ]
+    taken_dates = {entry["date"] for entry in existing}
+    slots = max(0, meals_per_week - sum(1 for e in existing if not e["cooked"]))
+
+    budget_row = conn.execute(
+        "SELECT target FROM budgets WHERE week_start = ?", (week_start,)
+    ).fetchone()
+    budget_target = (
+        float(budget_row["target"])
+        if budget_row is not None and float(budget_row["target"]) > 0
+        else None
+    )
+    week_cost = sum(
+        _recipe_estimate(conn, entry["recipe_id"]) for entry in existing
+    )
+
+    all_recipes = recipes.list_recipes(conn)
+    created: list[int] = []
+    for day in preferred:
+        if slots <= 0:
+            break
+        offset = _DAY_INDEX.get(day)
+        if offset is None:
+            continue
+        iso = (start + timedelta(days=offset)).isoformat()
+        if iso in taken_dates:
+            continue
+
+        pick = None
+        if chooser is not None:
+            pick = chooser(
+                conn, all_recipes, {"week_start": week_start, "date": iso}
+            )
+        if pick is None:
+            pick = _round_robin_pick(conn, all_recipes, budget_target, week_cost)
+            if pick is None:  # everything would push the week over budget
+                break
+        recipe_id = pick["id"]
+
+        created.append(add_entry(conn, recipe_id, iso))
+        taken_dates.add(iso)
+        slots -= 1
+        if budget_target is not None:
+            week_cost += _recipe_estimate(conn, recipe_id)
+    return created
