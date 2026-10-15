@@ -39,7 +39,9 @@ shared/social layer between instances.
   spend is recorded against it.
 - Inventory tracking: pantry, fridge, and freezer are real stores.
   Cooking a meal consumes from them; shopping refills them; the list only
-  ever asks for what is missing.
+  ever asks for what is missing. The household can also add, remove, or
+  adjust stock directly at any time, independent of the list and
+  calendar.
 - Live correlation: the planner, grocery list, and calendar interfaces
   are all views of the same underlying state and are always in sync. The
   user can enter any surface at any time; nothing locks them into a
@@ -137,6 +139,37 @@ ingredients from pantry/fridge/freezer. Removing a meal from the plan
 simply removes it; already-consumed inventory is not restored. There is
 no auto-consumption on the planned day.
 
+## Inventory management [owner]
+
+Inventory is a first-class surface, not a side effect of the list or the
+calendar. Every inventory operation is available directly on the Kitchen
+surface, with no need to go through the list, the calendar, or a
+shopping flow:
+
+- **Add** an item to pantry/fridge/freezer — picked from the canonical
+  item list, or created free-text (which normalizes through the same
+  item table recipes use, so cross-recipe merging still works). Adding
+  something the household already owns never touches the budget.
+- **Remove** — used up, thrown out, given away. One tap; an optional
+  reason, never a required form.
+- **Adjust** — nudge a quantity up or down for partial use.
+
+All three write through the same state layer as shopping completion and
+cooked check-off, so planner, list, and budget reflect them live. The
+grocery list is always "what the calendar needs minus what inventory
+has," no matter where the inventory change came from. Every change is
+recorded in a small event log, source-tagged (shopping, cooking, manual,
+receipt) — cheap in SQLite, and it buys an audit trail ("why did this
+change?") and corrections without special cases.
+
+**[builder's call]** No expiry-date tracking in v1. Manual expiry entry
+violates the anti-goal of adding complexity, and coarse have/need
+quantities do not support it well anyway. It later slots onto the
+inventory record without touching anything else.
+
+Kitchen UI: three tabs (pantry / fridge / freezer), search, quick add,
+and +/− steppers per item, mobile-friendly.
+
 ## Recipe ingest pipeline
 
 1. User pastes a URL (webpage or video, including social media video).
@@ -166,16 +199,17 @@ desktop friendly:
   history feeds back into what the household actually eats.
 
 Supporting surfaces: **Cookbook** (recipes, add-by-URL, flag-for-review
-queue), **Kitchen** (pantry/fridge/freezer inventory with quantities),
-**Budget** (weekly target, list estimate, actual spend, trend), and
-**Settings** (shopping day, planning day, meals per week, model endpoint,
-currency, stores for price lookups).
+queue), **Kitchen** (pantry/fridge/freezer inventory — see Inventory
+management), **Budget** (weekly target, list estimate, actual spend,
+trend), and **Settings** (shopping day, planning day, meals per week,
+model endpoint, currency, stores for price lookups).
 
 ## CLI
 
 Thin client over the HTTP API: add recipe by URL, show/edit the plan,
-generate the list, set budget, manage inventory. Works against a
-container instance or native run identically.
+generate the list, set budget, manage inventory (add/remove/adjust,
+list what's in pantry/fridge/freezer). Works against a container
+instance or native run identically.
 
 ## What's left to the builder
 
