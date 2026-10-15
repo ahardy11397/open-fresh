@@ -216,7 +216,12 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def delete_recipe(
         recipe_id: int, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        recipes.delete_recipe(conn, recipe_id)
+        try:
+            recipes.delete_recipe(conn, recipe_id)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=409, detail="recipe is planned; remove plan entries first"
+            ) from exc
         return ok()
 
     # --- plan ---------------------------------------------------------------

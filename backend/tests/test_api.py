@@ -178,3 +178,26 @@ def test_422_on_bad_body(client):
     # PATCH with a missing delta
     resp = client.patch("/inventory/1", json={})
     assert resp.status_code == 422
+
+
+def test_delete_planned_recipe_returns_409(client):
+    recipe_id = _make_recipe(
+        client, "Rice Bowl", [{"raw": "rice", "quantity": 200, "unit": "g"}]
+    )
+    resp = client.post("/plan", json={"recipe_id": recipe_id, "date": MONDAY})
+    assert resp.status_code == 200
+    entry_id = resp.json()["entry_id"]
+
+    # deleting a recipe that plan entries still reference is a conflict
+    resp = client.delete(f"/recipes/{recipe_id}")
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "recipe is planned; remove plan entries first"
+    # the recipe itself survives
+    assert client.get(f"/recipes/{recipe_id}").status_code == 200
+
+    # after removing the plan entry, deletion succeeds
+    resp = client.delete(f"/plan/{entry_id}")
+    assert resp.status_code == 200
+    resp = client.delete(f"/recipes/{recipe_id}")
+    assert resp.status_code == 200
+    assert client.get(f"/recipes/{recipe_id}").status_code == 404
