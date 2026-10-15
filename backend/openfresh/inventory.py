@@ -22,9 +22,9 @@ def _log_event(
     note: str | None,
 ) -> None:
     conn.execute(
-        """INSERT INTO inventory_events (item_id, location, delta, source, note)
-           VALUES (?, ?, ?, ?, ?)""",
-        (item_id, location, delta, source, note),
+        """INSERT INTO inventory_events (item_id, location, delta, source, note, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (item_id, location, delta, source, note, _now()),
     )
 
 

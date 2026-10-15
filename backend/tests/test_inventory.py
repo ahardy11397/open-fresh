@@ -73,6 +73,16 @@ def test_consumption_floors_at_zero(tmp_path):
     assert len(events) == 2
 
 
+def test_logged_event_has_created_at(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    eggs = items.get_or_create(conn, "eggs")
+    inventory.add_item(conn, eggs, "fridge", 2.0)
+    row = conn.execute(
+        "SELECT created_at FROM inventory_events ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["created_at"] is not None
+
+
 def test_get_quantity_sums_locations(tmp_path):
     conn = _fresh_conn(tmp_path)
     eggs = items.get_or_create(conn, "eggs")
