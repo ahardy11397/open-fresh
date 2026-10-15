@@ -1,0 +1,26 @@
+[project]
+name = "openfresh"
+version = "0.1.0"
+description = "Self-hosted meal planner backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openfresh*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
