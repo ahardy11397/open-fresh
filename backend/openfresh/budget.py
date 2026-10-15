@@ -48,14 +48,15 @@ def record_spend(
 
 
 def _spend_in_window(
-    conn: sqlite3.Connection, week_start: str
+    conn: sqlite3.Connection, week_start: str, currency: str
 ) -> float:
-    """Sum of spend rows dated in [week_start, week_start + 7 days)."""
+    """Sum of spend rows (matching currency) dated in [week_start, +7 days)."""
     start = date.fromisoformat(week_start)
     end = start + timedelta(days=7)
     row = conn.execute(
-        "SELECT SUM(price) FROM spend WHERE date >= ? AND date < ?",
-        (start.isoformat(), end.isoformat()),
+        "SELECT SUM(price) FROM spend WHERE date >= ? AND date < ?"
+        " AND currency = ?",
+        (start.isoformat(), end.isoformat(), currency),
     ).fetchone()
     return float(row[0]) if row[0] is not None else 0.0
 
@@ -67,9 +68,10 @@ def week_summary(
 ) -> dict:
     """Estimated vs actual for the week starting at week_start (ISO date).
 
-    ``estimated`` sums generate_list line prices (skipping None prices);
-    ``actual`` sums spend rows in the window; ``remaining`` is
-    ``target - actual`` when any spend row exists, else ``target - estimated``.
+    ``estimated`` sums generate_list line prices in the budget's currency
+    (skipping None prices and other currencies); ``actual`` sums spend rows
+    in the window matching the currency; ``remaining`` is ``target - actual``
+    when any spend row exists, else ``target - estimated``.
     """
     start = date.fromisoformat(week_start)
     end = start + timedelta(days=7)
@@ -79,17 +81,21 @@ def week_summary(
     ).fetchone()[0]
 
     lines = listgen.generate_list(conn, week_start, lookup=lookup)
-    estimated = float(
-        sum(line["price"] for line in lines if line["price"] is not None)
-    )
-    actual = _spend_in_window(conn, week_start)
-
     budget_row = conn.execute(
         "SELECT target, currency FROM budgets WHERE week_start = ?",
         (week_start,),
     ).fetchone()
     target = float(budget_row["target"]) if budget_row is not None else 0.0
     currency = budget_row["currency"] if budget_row is not None else "USD"
+
+    estimated = float(
+        sum(
+            line["price"]
+            for line in lines
+            if line["price"] is not None and line["currency"] == currency
+        )
+    )
+    actual = _spend_in_window(conn, week_start, currency)
 
     base = actual if spend_count > 0 else estimated
     remaining = target - base

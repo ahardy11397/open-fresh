@@ -236,3 +236,17 @@ def test_scaled_ingredients_helper_shape(tmp_path):
     assert quantity == 8.0  # 4 eggs * (4 household / 2 servings)
     assert unit == ""
     assert staple is False
+
+
+def test_scaled_ingredients_zero_servings_returns_empty(tmp_path):
+    """A recipe with servings < 1 is skipped, never divided by (finding 3)."""
+    conn = _fresh_conn(tmp_path)
+    recipe_id = _egg_recipe(conn)
+    conn.execute("UPDATE recipes SET servings = 0 WHERE id = ?", (recipe_id,))
+    conn.commit()
+    entry_id = planner.add_entry(conn, recipe_id, MID_WEEK)
+    entry = conn.execute(
+        "SELECT * FROM plan_entries WHERE id = ?", (entry_id,)
+    ).fetchone()
+
+    assert planner._scaled_ingredients(conn, entry) == []  # must not raise

@@ -48,7 +48,7 @@ def get_or_create_with_alias(conn: sqlite3.Connection, raw: str) -> int:
     item_id = cur.lastrowid
     assert item_id is not None
     conn.execute(
-        "INSERT INTO item_aliases (alias, item_id) VALUES (?, ?)", (raw, item_id)
+        "INSERT INTO item_aliases (alias, item_id) VALUES (?, ?)", (normalized, item_id)
     )
     conn.commit()
     return item_id

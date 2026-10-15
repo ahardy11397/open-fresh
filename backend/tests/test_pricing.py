@@ -14,15 +14,15 @@ def test_own_beats_estimate(tmp_path):
     eggs = items.get_or_create(conn, "eggs")
     pricing.set_estimate(conn, eggs, "dairy", 3.0, "USD")
     pricing.record_own_price(conn, eggs, 2.5, "USD", "2026-10-15")
-    assert pricing.price_item(conn, eggs) == (2.5, "own")
+    assert pricing.price_item(conn, eggs) == (2.5, "own", "USD")
 
 
 def test_falls_back_to_estimate(tmp_path):
     conn = _fresh_conn(tmp_path)
     eggs = items.get_or_create(conn, "eggs")
-    pricing.set_estimate(conn, eggs, "dairy", 3.0, "USD")
+    pricing.set_estimate(conn, eggs, "dairy", 3.0, "EUR")
     lookup = lambda name: None
-    assert pricing.price_item(conn, eggs, lookup=lookup) == (3.0, "estimate")
+    assert pricing.price_item(conn, eggs, lookup=lookup) == (3.0, "estimate", "EUR")
 
 
 def test_openprices_lookup_used_when_no_own(tmp_path):
@@ -30,7 +30,8 @@ def test_openprices_lookup_used_when_no_own(tmp_path):
     eggs = items.get_or_create(conn, "eggs")
     pricing.set_estimate(conn, eggs, "dairy", 3.0, "USD")
     lookup = lambda name: 4.5
-    assert pricing.price_item(conn, eggs, lookup=lookup) == (4.5, "openprices")
+    # lookup returns a bare number: no currency is known
+    assert pricing.price_item(conn, eggs, lookup=lookup) == (4.5, "openprices", None)
 
 
 def test_all_missing_returns_none(tmp_path):
@@ -55,7 +56,7 @@ def test_generic_estimate_fallback_matches_true_generic_rows(tmp_path):
     eggs = items.get_or_create(conn, "eggs")
     pricing.set_estimate(conn, None, "household", 9.99, "USD")
     pricing.set_estimate(conn, None, None, 3.25, "USD")
-    assert pricing.price_item(conn, eggs) == (3.25, "estimate")
+    assert pricing.price_item(conn, eggs) == (3.25, "estimate", "USD")
 
 
 def test_make_lookup_parses_response():

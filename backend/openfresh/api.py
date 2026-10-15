@@ -11,10 +11,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterator
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openfresh import (
     budget,
@@ -42,8 +42,8 @@ class AliasCreate(BaseModel):
 class InventoryCreate(BaseModel):
     name: str | None = None
     item_id: int | None = None
-    location: str
-    quantity: float
+    location: Literal["pantry", "fridge", "freezer"]
+    quantity: float = Field(ge=0)
     unit: str = ""
 
 
@@ -53,7 +53,7 @@ class InventoryPatch(BaseModel):
 
 class RecipeCreate(BaseModel):
     title: str
-    servings: int = 2
+    servings: int = Field(default=2, ge=1)
     source_url: str | None = None
 
 
@@ -66,20 +66,20 @@ class IngredientCreate(BaseModel):
 
 class PlanCreate(BaseModel):
     recipe_id: int
-    date: str
+    date: date
     slot: str | None = None
     servings_override: int | None = None
 
 
 class AutoPopulateBody(BaseModel):
-    week_start: str
+    week_start: date
 
 
 class OwnPriceCreate(BaseModel):
     item_id: int
     price: float
     currency: str
-    date: str
+    date: date
 
 
 class EstimateCreate(BaseModel):
@@ -91,14 +91,14 @@ class EstimateCreate(BaseModel):
 
 class BudgetPut(BaseModel):
     target: float
-    currency: str = "USD"
+    currency: str | None = None
 
 
 class SpendCreate(BaseModel):
     item_id: int | None = None
     price: float
     currency: str
-    date: str
+    date: date
 
 
 class SettingsPut(BaseModel):
@@ -133,7 +133,12 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def post_alias(
         body: AliasCreate, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        items.rename_alias(conn, body.raw, body.item_id)
+        try:
+            items.rename_alias(conn, body.raw, body.item_id)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=422, detail="item_id does not exist"
+            ) from exc
         return ok()
 
     # --- inventory ----------------------------------------------------------
@@ -228,18 +233,26 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
 
     @router.get("/plan")
     def get_plan(
-        week_start: str | None = None,
+        week_start: date | None = None,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> list[dict]:
-        return planner.get_week(conn, week_start or current_week_start())
+        return planner.get_week(
+            conn, week_start.isoformat() if week_start else current_week_start()
+        )
 
     @router.post("/plan")
     def post_plan(
         body: PlanCreate, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        entry_id = planner.add_entry(
-            conn, body.recipe_id, body.date, body.slot, body.servings_override
-        )
+        try:
+            entry_id = planner.add_entry(
+                conn, body.recipe_id, body.date.isoformat(), body.slot,
+                body.servings_override,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=404, detail="recipe not found"
+            ) from exc
         return {"entry_id": entry_id}
 
     @router.delete("/plan/{entry_id}")
@@ -260,16 +273,18 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def post_auto_populate(
         body: AutoPopulateBody, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        return {"entry_ids": planner.auto_populate(conn, body.week_start)}
+        return {"entry_ids": planner.auto_populate(conn, body.week_start.isoformat())}
 
     # --- grocery list ---------------------------------------------------------
 
     @router.get("/list")
     def get_list(
-        week_start: str | None = None,
+        week_start: date | None = None,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> list[dict]:
-        return listgen.generate_list(conn, week_start or current_week_start())
+        return listgen.generate_list(
+            conn, week_start.isoformat() if week_start else current_week_start()
+        )
 
     # --- prices ---------------------------------------------------------------
 
@@ -277,9 +292,15 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def post_own_price(
         body: OwnPriceCreate, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        pricing.record_own_price(
-            conn, body.item_id, body.price, body.currency, body.date
-        )
+        try:
+            pricing.record_own_price(
+                conn, body.item_id, body.price, body.currency,
+                body.date.isoformat(),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(
+                status_code=422, detail="item_id does not exist"
+            ) from exc
         return ok()
 
     @router.post("/prices/estimate")
@@ -298,38 +319,66 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     ) -> dict[str, Any]:
         item_id = items.get_or_create_with_alias(conn, name)
         resolved = pricing.price_item(conn, item_id)
-        price, price_source = (None, None) if resolved is None else resolved
+        price, price_source, price_currency = (
+            (None, None, None) if resolved is None else resolved
+        )
         return {
             "item_id": item_id,
             "price": price,
             "price_source": price_source,
+            "currency": price_currency,
         }
 
     # --- budget ---------------------------------------------------------------
 
     @router.get("/budget/{week_start}")
     def get_budget(
-        week_start: str, conn: sqlite3.Connection = Depends(get_conn)
+        week_start: date, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        return budget.week_summary(conn, week_start)
+        return budget.week_summary(conn, week_start.isoformat())
 
     @router.put("/budget/{week_start}")
     def put_budget(
-        week_start: str,
+        week_start: date,
         body: BudgetPut,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
-        budget.set_budget(conn, week_start, body.target, body.currency)
+        week = week_start.isoformat()
+        existing = conn.execute(
+            "SELECT currency FROM budgets WHERE week_start = ?", (week,)
+        ).fetchone()
+        if body.currency is not None:
+            currency = body.currency
+        elif existing is not None:
+            # Updating the target alone must not reset the stored currency.
+            currency = existing["currency"]
+        else:
+            currency = "USD"
+        budget.set_budget(conn, week, body.target, currency)
         return ok()
 
     @router.post("/budget/{week_start}/spend")
     def post_spend(
-        week_start: str,
+        week_start: date,
         body: SpendCreate,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
+        # Refuse mixed-currency spend within one week (blind sums are wrong).
+        start = body.date - timedelta(days=body.date.weekday())
+        end = start + timedelta(days=7)
+        rows = conn.execute(
+            "SELECT DISTINCT currency FROM spend WHERE date >= ? AND date < ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        currencies = {row["currency"] for row in rows}
+        if currencies and currencies != {body.currency}:
+            raise HTTPException(
+                status_code=422,
+                detail=f"week {start.isoformat()} already has spend in "
+                f"{', '.join(sorted(currencies))}",
+            )
         budget.record_spend(
-            conn, body.item_id, body.price, body.currency, body.date
+            conn, body.item_id, body.price, body.currency, body.date.isoformat()
         )
         return ok()
 
@@ -341,10 +390,8 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     ) -> dict[str, Any]:
         return {
             "household_size": settings.get_household_size(conn),
-            "meals_per_week": int(
-                settings.get_setting(
-                    conn, planner.MEALS_PER_WEEK_KEY, planner.MEALS_PER_WEEK_DEFAULT
-                )
+            "meals_per_week": settings.get_positive_int(
+                conn, planner.MEALS_PER_WEEK_KEY, planner.MEALS_PER_WEEK_DEFAULT
             ),
             "preferred_days": settings.get_setting(
                 conn, planner.PREFERRED_DAYS_KEY, planner.PREFERRED_DAYS_DEFAULT
@@ -355,6 +402,30 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def put_settings(
         body: SettingsPut, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
+        # Validate on write so garbage values can never 500 the getters.
+        known_keys = {
+            settings.HOUSEHOLD_SIZE_KEY,
+            planner.MEALS_PER_WEEK_KEY,
+            planner.PREFERRED_DAYS_KEY,
+        }
+        if body.key not in known_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown setting key; known keys: {sorted(known_keys)}",
+            )
+        if body.key in (settings.HOUSEHOLD_SIZE_KEY, planner.MEALS_PER_WEEK_KEY):
+            try:
+                parsed = int(body.value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{body.key} must be an integer >= 1",
+                ) from exc
+            if parsed < 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{body.key} must be an integer >= 1",
+                )
         settings.set_setting(conn, body.key, body.value)
         return ok()
 

@@ -28,7 +28,9 @@ def test_free_text_creates_alias(tmp_path):
             "SELECT alias FROM item_aliases WHERE item_id = ?", (item_id,)
         )
     }
-    assert "Roma tomatoes" in aliases
+    # aliases are stored normalized (collapsed lowercase), not raw
+    assert "roma tomatoes" in aliases
+    assert "Roma tomatoes" not in aliases
 
 
 def test_alias_redirects_after_manual_link(tmp_path):

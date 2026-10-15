@@ -38,6 +38,9 @@ def _scaled_ingredients(
     recipe = recipes.get_recipe(conn, entry["recipe_id"])
     if recipe is None:
         return []
+    if recipe["servings"] < 1:
+        # Never divide by a non-positive servings value (stored garbage).
+        return []
     servings = entry["servings_override"] or settings.get_household_size(conn)
     scale = servings / recipe["servings"]
     return [
@@ -150,7 +153,7 @@ def _recipe_estimate(
     unquantified ingredients contribute 0. Missing recipe yields 0.0.
     """
     recipe = recipes.get_recipe(conn, recipe_id)
-    if recipe is None:
+    if recipe is None or recipe["servings"] < 1:
         return 0.0
     scale = settings.get_household_size(conn) / recipe["servings"]
     total = 0.0
@@ -215,9 +218,8 @@ def auto_populate(
     start = date.fromisoformat(week_start)
     end = start + timedelta(days=7)
 
-    raw_meals = settings.get_setting(conn, MEALS_PER_WEEK_KEY)
-    meals_per_week = (
-        MEALS_PER_WEEK_DEFAULT if raw_meals is None else int(raw_meals)
+    meals_per_week = settings.get_positive_int(
+        conn, MEALS_PER_WEEK_KEY, MEALS_PER_WEEK_DEFAULT
     )
     raw_days = settings.get_setting(
         conn, PREFERRED_DAYS_KEY, PREFERRED_DAYS_DEFAULT

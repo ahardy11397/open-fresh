@@ -201,3 +201,120 @@ def test_delete_planned_recipe_returns_409(client):
     resp = client.delete(f"/recipes/{recipe_id}")
     assert resp.status_code == 200
     assert client.get(f"/recipes/{recipe_id}").status_code == 404
+
+
+# --- final-review fix wave -------------------------------------------------
+
+
+def test_post_inventory_negative_quantity_422(client):
+    resp = client.post(
+        "/inventory",
+        json={"name": "rice", "location": "pantry", "quantity": -5, "unit": "g"},
+    )
+    assert resp.status_code == 422
+
+
+def test_post_inventory_bad_location_422(client):
+    resp = client.post(
+        "/inventory", json={"name": "rice", "location": "cupboard", "quantity": 5}
+    )
+    assert resp.status_code == 422
+
+
+def test_post_plan_unknown_recipe_404(client):
+    resp = client.post("/plan", json={"recipe_id": 99999, "date": MONDAY})
+    assert resp.status_code == 404
+
+
+def test_post_alias_unknown_item_422(client):
+    resp = client.post("/items/alias", json={"raw": "thing", "item_id": 99999})
+    assert resp.status_code == 422
+
+
+def test_post_own_price_unknown_item_422(client):
+    resp = client.post(
+        "/prices/own",
+        json={"item_id": 99999, "price": 1.0, "currency": "USD", "date": MONDAY},
+    )
+    assert resp.status_code == 422
+
+
+def test_garbage_dates_422(client):
+    for path in ("/plan?week_start=garbage", "/list?week_start=garbage",
+                 "/budget/garbage"):
+        resp = client.get(path)
+        assert resp.status_code == 422, path
+    resp = client.post("/plan/auto-populate", json={"week_start": "garbage"})
+    assert resp.status_code == 422
+    resp = client.post("/plan", json={"recipe_id": 1, "date": "garbage"})
+    assert resp.status_code == 422
+    resp = client.post(
+        f"/budget/{MONDAY}/spend",
+        json={"price": 1.0, "currency": "USD", "date": "garbage"},
+    )
+    assert resp.status_code == 422
+
+
+def test_post_recipe_zero_servings_422(client):
+    resp = client.post("/recipes", json={"title": "Zero", "servings": 0})
+    assert resp.status_code == 422
+
+
+def test_post_recipe_negative_servings_422(client):
+    resp = client.post("/recipes", json={"title": "Neg", "servings": -1})
+    assert resp.status_code == 422
+
+
+def test_settings_put_garbage_422(client):
+    # unparseable int value
+    resp = client.put("/settings", json={"key": "household_size", "value": "abc"})
+    assert resp.status_code == 422
+    # value below the minimum
+    resp = client.put("/settings", json={"key": "household_size", "value": "0"})
+    assert resp.status_code == 422
+    resp = client.put("/settings", json={"key": "meals_per_week", "value": "-2"})
+    assert resp.status_code == 422
+    # unknown setting key
+    resp = client.put("/settings", json={"key": "unknown_key", "value": "1"})
+    assert resp.status_code == 422
+    # GET still works and returns the default
+    body = client.get("/settings")
+    assert body.status_code == 200
+    assert body.json()["household_size"] == 2
+
+
+def test_post_spend_mixed_currency_422(client):
+    resp = client.post(
+        f"/budget/{MONDAY}/spend",
+        json={"price": 1.0, "currency": "USD", "date": MONDAY},
+    )
+    assert resp.status_code == 200
+    resp = client.post(
+        f"/budget/{MONDAY}/spend",
+        json={"price": 1.0, "currency": "EUR", "date": "2026-10-13"},
+    )
+    assert resp.status_code == 422
+
+
+def test_put_budget_keeps_currency_when_not_given(client):
+    client.put(f"/budget/{MONDAY}", json={"target": 50.0, "currency": "EUR"})
+    client.put(f"/budget/{MONDAY}", json={"target": 60.0})
+    body = client.get(f"/budget/{MONDAY}").json()
+    assert body["target"] == 60.0
+    assert body["currency"] == "EUR"
+
+
+def test_list_lines_carry_currency(client):
+    recipe_id = _make_recipe(
+        client, "Rice Bowl", [{"raw": "rice", "quantity": 200, "unit": "g"}]
+    )
+    client.post("/plan", json={"recipe_id": recipe_id, "date": MONDAY})
+    resp = client.post(
+        "/prices/estimate",
+        json={"item_id": None, "category": None, "price": 2.0, "currency": "USD"},
+    )
+    assert resp.status_code == 200
+    lines = client.get(f"/list?week_start={MONDAY}").json()
+    assert lines
+    for line in lines:
+        assert line["currency"] == "USD"

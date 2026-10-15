@@ -1,5 +1,7 @@
 """Tests for the weekly budget: estimated vs actual spend (task 9)."""
 
+import pytest
+
 from openfresh import budget, db, items, listgen, pricing, recipes
 
 WEEK_START = "2026-10-19"  # a Monday
@@ -140,3 +142,38 @@ def test_empty_week_zeroes(tmp_path):
         "remaining": 0.0,
         "lines": [],
     }
+
+
+def test_summary_estimated_sums_only_matching_currency(tmp_path):
+    """Currency-blind summing of mixed-currency lines is fixed (finding 6)."""
+    conn = _fresh_conn(tmp_path)
+    _plan_one_priced(conn, name="rice", price=2.0)  # USD line, 2 cups x 2.0
+    r2 = recipes.create_recipe(conn, "Euro Dish")
+    recipes.add_ingredient(conn, r2, "beans", 1.0, "cup")
+    beans = items.get_or_create(conn, "beans")
+    pricing.record_own_price(conn, beans, 3.0, "EUR", WEEK_START)
+    conn.execute(
+        "INSERT INTO plan_entries (recipe_id, date, slot, cooked)"
+        " VALUES (?, ?, 'dinner', 0)",
+        (r2, MID_WEEK),
+    )
+    conn.commit()
+
+    summary = budget.week_summary(conn, WEEK_START)
+
+    assert summary["currency"] == "USD"
+    assert summary["estimated"] == pytest.approx(4.0)  # EUR line excluded
+    currencies = {line["currency"] for line in summary["lines"]}
+    assert currencies == {"USD", "EUR"}
+
+
+def test_actual_sums_only_matching_currency(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    item_id = _plan_one_priced(conn, price=2.0)
+    budget.set_budget(conn, WEEK_START, 50.0)
+    budget.record_spend(conn, item_id, 3.50, "USD", MID_WEEK)
+    budget.record_spend(conn, None, 10.00, "EUR", MID_WEEK)
+
+    summary = budget.week_summary(conn, WEEK_START)
+
+    assert summary["actual"] == pytest.approx(3.50)  # EUR spend excluded

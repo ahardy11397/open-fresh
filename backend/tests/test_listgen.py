@@ -73,6 +73,22 @@ def test_subtracts_inventory(tmp_path):
     assert lines[0]["quantity"] == 2
 
 
+def test_subtraction_matches_unit(tmp_path):
+    """Only same-unit stock is subtracted from a line (final-review finding 2)."""
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Rice Two Ways")
+    recipes.add_ingredient(conn, r, "rice", 200.0, "g")
+    recipes.add_ingredient(conn, r, "rice", 1.0, "cup")
+    rice = items.get_or_create(conn, "rice")
+    inventory.add_item(conn, rice, "pantry", 100.0, unit="g")
+    _plan(conn, r, MID_WEEK)
+
+    lines = listgen.generate_list(conn, WEEK_START)
+
+    by_unit = {line["unit"]: line["quantity"] for line in lines}
+    assert by_unit == {"g": 100.0, "cup": 1.0}
+
+
 def test_staples_never_listed(tmp_path):
     conn = _fresh_conn(tmp_path)
     r = recipes.create_recipe(conn, "Salted Thing")
@@ -123,6 +139,35 @@ def test_lines_carry_price_source(tmp_path):
     assert len(lines) == 1
     assert lines[0]["price_source"] == "estimate"
     assert lines[0]["price"] == 18.0  # 3.0 per unit x 6 needed
+
+
+def test_lines_carry_currency(tmp_path):
+    """Line dicts carry the resolved price's currency (final-review finding 6)."""
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Omelette")
+    recipes.add_ingredient(conn, r, "eggs", 6.0, "")
+    eggs = items.get_or_create(conn, "eggs")
+    pricing.set_estimate(conn, eggs, "dairy", 3.0, "EUR")
+    _plan(conn, r, MID_WEEK)
+
+    lines = listgen.generate_list(conn, WEEK_START)
+
+    assert len(lines) == 1
+    assert lines[0]["currency"] == "EUR"
+
+
+def test_unpriced_line_currency_defaults_to_usd(tmp_path):
+    """A line with no resolvable price defaults its currency to USD."""
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Mystery Dish")
+    recipes.add_ingredient(conn, r, "mystery", 1.0, "cup")
+    _plan(conn, r, MID_WEEK)
+
+    lines = listgen.generate_list(conn, WEEK_START)
+
+    assert len(lines) == 1
+    assert lines[0]["price"] is None
+    assert lines[0]["currency"] == "USD"
 
 
 def test_odd_units_survive_listgen(tmp_path):

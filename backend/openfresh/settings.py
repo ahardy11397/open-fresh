@@ -27,7 +27,17 @@ def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def get_household_size(conn: sqlite3.Connection) -> int:
-    value = get_setting(conn, HOUSEHOLD_SIZE_KEY)
+    """Household size, falling back to the default on absent/unparseable/invalid values."""
+    return get_positive_int(conn, HOUSEHOLD_SIZE_KEY, HOUSEHOLD_SIZE_DEFAULT)
+
+
+def get_positive_int(conn: sqlite3.Connection, key: str, default: int) -> int:
+    """Int-parsing getter: falls back to default on absent/unparseable/<1 values."""
+    value = get_setting(conn, key)
     if value is None:
-        return HOUSEHOLD_SIZE_DEFAULT
-    return int(value)
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 1 else default

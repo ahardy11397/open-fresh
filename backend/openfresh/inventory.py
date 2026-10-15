@@ -37,26 +37,33 @@ def add_item(
     source: str = "manual",
     note: str | None = None,
 ) -> int:
-    """Upsert an inventory row, adding to any existing quantity; log the delta."""
+    """Upsert an inventory row, adding to any existing quantity; log the delta.
+
+    The resulting quantity is floored at 0 (like adjust/consume); the event
+    logs the true applied delta, not the raw request.
+    """
     row = conn.execute(
         "SELECT id, quantity FROM inventory WHERE item_id = ? AND location = ?",
         (item_id, location),
     ).fetchone()
     if row is not None:
         inv_id = row["id"]
+        new_quantity = max(0.0, row["quantity"] + quantity)
+        applied = new_quantity - row["quantity"]
         conn.execute(
             "UPDATE inventory SET quantity = ?, unit = ?, updated_at = ? WHERE id = ?",
-            (row["quantity"] + quantity, unit, _now(), inv_id),
+            (new_quantity, unit, _now(), inv_id),
         )
     else:
         cur = conn.execute(
             """INSERT INTO inventory (item_id, location, quantity, unit, updated_at)
                VALUES (?, ?, ?, ?, ?)""",
-            (item_id, location, quantity, unit, _now()),
+            (item_id, location, max(0.0, quantity), unit, _now()),
         )
         inv_id = cur.lastrowid
+        applied = max(0.0, quantity)
     assert inv_id is not None
-    _log_event(conn, item_id, location, quantity, source, note)
+    _log_event(conn, item_id, location, applied, source, note)
     conn.commit()
     return inv_id
 
@@ -140,12 +147,26 @@ def get_all(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def get_quantity(conn: sqlite3.Connection, item_id: int) -> float:
-    """Total on hand for an item across all locations/units."""
-    row = conn.execute(
-        "SELECT COALESCE(SUM(quantity), 0) AS total FROM inventory WHERE item_id = ?",
-        (item_id,),
-    ).fetchone()
+def get_quantity(
+    conn: sqlite3.Connection, item_id: int, unit: str | None = None
+) -> float:
+    """On hand for an item, summed across locations.
+
+    With ``unit=None`` all units are summed; otherwise only stock rows whose
+    unit matches are counted (cross-unit stock is never mixed).
+    """
+    if unit is None:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS total FROM inventory"
+            " WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS total FROM inventory"
+            " WHERE item_id = ? AND unit = ?",
+            (item_id, unit),
+        ).fetchone()
     return float(row["total"])
 
 

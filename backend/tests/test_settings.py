@@ -23,3 +23,15 @@ def test_get_household_size(tmp_path):
 
     settings.set_setting(conn, "household_size", "5")
     assert settings.get_household_size(conn) == 5
+
+
+def test_get_household_size_garbage_falls_back_to_default(tmp_path):
+    conn = db.get_conn(str(tmp_path / "kitchen.db"))
+    db.init_db(conn)
+
+    settings.set_setting(conn, "household_size", "abc")
+    assert settings.get_household_size(conn) == 2
+    settings.set_setting(conn, "household_size", "0")
+    assert settings.get_household_size(conn) == 2
+    settings.set_setting(conn, "household_size", "-3")
+    assert settings.get_household_size(conn) == 2

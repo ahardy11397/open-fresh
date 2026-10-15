@@ -45,46 +45,50 @@ def set_estimate(
     conn.commit()
 
 
-def _own_price(conn: sqlite3.Connection, item_id: int) -> tuple[float, str] | None:
+def _own_price(conn: sqlite3.Connection, item_id: int) -> tuple[float, str, str] | None:
     row = conn.execute(
-        "SELECT price FROM prices_own WHERE item_id = ?"
+        "SELECT price, currency FROM prices_own WHERE item_id = ?"
         " ORDER BY date DESC, id DESC LIMIT 1",
         (item_id,),
     ).fetchone()
     if row is None:
         return None
-    return (row["price"], "own")
+    return (row["price"], "own", row["currency"])
 
 
-def _estimate(conn: sqlite3.Connection, item_id: int) -> tuple[float, str] | None:
+def _estimate(
+    conn: sqlite3.Connection, item_id: int
+) -> tuple[float, str, str] | None:
     row = conn.execute(
-        "SELECT price FROM price_estimates WHERE item_id = ?"
+        "SELECT price, currency FROM price_estimates WHERE item_id = ?"
         " ORDER BY id DESC LIMIT 1",
         (item_id,),
     ).fetchone()
     if row is None:
         row = conn.execute(
-            "SELECT price FROM price_estimates WHERE item_id IS NULL"
+            "SELECT price, currency FROM price_estimates WHERE item_id IS NULL"
             " AND category IS NULL"
             " ORDER BY id DESC LIMIT 1"
         ).fetchone()
     if row is None:
         return None
-    return (row["price"], "estimate")
+    return (row["price"], "estimate", row["currency"])
 
 
 def price_item(
     conn: sqlite3.Connection,
     item_id: int,
     lookup=None,
-) -> tuple[float, str] | None:
+) -> tuple[float, str, str | None] | None:
     """Resolve a price for an item.
 
     Resolution order: most recent ``prices_own`` row -> ``lookup(item_name)``
     (optional callable, skipped when None) -> ``price_estimates`` -> None.
-    Returns ``(price, source)`` with source in {"own", "openprices",
-    "estimate"}. The lookup itself never raises: any error is treated as a
-    miss so the next layer applies.
+    Returns ``(price, source, currency)`` with source in {"own", "openprices",
+    "estimate"}; currency comes from the resolved row where available and is
+    None when unknown (e.g. an Open Prices lookup returning a bare number).
+    The lookup itself never raises: any error is treated as a miss so the
+    next layer applies.
     """
     own = _own_price(conn, item_id)
     if own is not None:
@@ -100,7 +104,7 @@ def price_item(
             except Exception:
                 value = None
             if value is not None:
-                return (float(value), "openprices")
+                return (float(value), "openprices", None)
 
     return _estimate(conn, item_id)
 

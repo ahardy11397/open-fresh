@@ -1,9 +1,11 @@
 """Grocery list generation: week plan entries -> merged, priced lines.
 
 Global constraints: merge/sum only identical (item_id, unit) pairs; mixed
-units stay separate lines; inventory subtraction matches on item_id only
-and is floored at 0; staples never appear; zero-need lines are dropped;
-odd ingredients (quantity None) survive as lines with quantity None.
+units stay separate lines; inventory subtraction counts only stock rows whose
+unit matches the line's unit and is floored at 0; staples never appear;
+zero-need lines are dropped; odd ingredients (quantity None) survive as lines
+with quantity None; every priced line carries a currency (USD default when
+the resolved price has none).
 """
 
 from __future__ import annotations
@@ -75,7 +77,12 @@ def generate_list(
     ):
         quantity = line["quantity"]
         if quantity is not None:
-            quantity = round(max(0.0, quantity - inventory.get_quantity(conn, item_id)), 6)
+            # Only same-unit stock is subtracted; cross-unit stock never
+            # touches this line. Floored at 0.
+            quantity = round(
+                max(0.0, quantity - inventory.get_quantity(conn, item_id, unit)),
+                6,
+            )
             if quantity == 0:
                 continue
 
@@ -86,6 +93,11 @@ def generate_list(
         else:
             price = pricing.convert(conn, item_id, quantity, unit, price_per, "")
             price_source = price_per[1]
+        currency = (
+            price_per[2]
+            if price_per is not None and price_per[2] is not None
+            else "USD"
+        )
 
         lines.append(
             {
@@ -95,6 +107,7 @@ def generate_list(
                 "unit": unit,
                 "price": price,
                 "price_source": price_source,
+                "currency": currency,
             }
         )
     return lines
