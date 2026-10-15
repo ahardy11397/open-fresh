@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from openfresh import inventory, pricing, recipes, settings
+from openfresh import inventory, planner, pricing
 
 
 def _week_entries(conn: sqlite3.Connection, week_start: str) -> list:
@@ -40,28 +40,34 @@ def generate_list(
     subtracts inventory (floored at 0), drops staples and zero-need lines,
     and prices each line through the pricing layer.
     """
-    household = settings.get_household_size(conn)
+    names: dict[int | None, str | None] = {}
+
+    def item_name(item_id: int | None) -> str | None:
+        if item_id not in names:
+            row = conn.execute(
+                "SELECT name FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+            names[item_id] = row["name"] if row is not None else None
+        return names[item_id]
 
     # (item_id, unit) -> {"name": str, "quantity": float|None}
     # quantity is None when any contributing ingredient was unquantified.
-    need: dict[tuple[int, str], dict] = {}
+    need: dict[tuple, dict] = {}
     for entry in _week_entries(conn, week_start):
-        recipe = recipes.get_recipe(conn, entry["recipe_id"])
-        if recipe is None:
-            continue
-        servings = entry["servings_override"] or household
-        scale = servings / recipe["servings"]
-        for ing in recipe["ingredients"]:
-            if ing["staple"]:
+        # One shared scaling code path with the cooked check-off.
+        for item_id, _raw, quantity, unit, staple in (
+            planner._scaled_ingredients(conn, entry)
+        ):
+            if staple:
                 continue
-            key = (ing["item_id"], ing["unit"])
+            key = (item_id, unit)
             line = need.setdefault(
-                key, {"name": ing["item_name"], "quantity": 0.0}
+                key, {"name": item_name(item_id), "quantity": 0.0}
             )
-            if ing["quantity"] is None:
+            if quantity is None:
                 line["quantity"] = None
             elif line["quantity"] is not None:
-                line["quantity"] += ing["quantity"] * scale
+                line["quantity"] += quantity
 
     lines: list[dict] = []
     for (item_id, unit), line in sorted(
