@@ -124,6 +124,26 @@ def get_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
     ]
 
 
+def get_range(
+    conn: sqlite3.Connection, start_date: str, end_date: str
+) -> list[dict]:
+    """Entries (with recipe titles) dated in [start_date, end_date] inclusive.
+
+    Includes both planned and cooked entries, ordered by date, then id.
+    """
+    return [
+        dict(row)
+        for row in conn.execute(
+            """SELECT plan_entries.id, recipe_id, date, slot,
+                      servings_override, cooked, recipes.title
+               FROM plan_entries JOIN recipes ON recipes.id = recipe_id
+               WHERE date >= ? AND date <= ?
+               ORDER BY date, plan_entries.id""",
+            (start_date, end_date),
+        )
+    ]
+
+
 def list_entries(
     conn: sqlite3.Connection, cooked: bool | None = None
 ) -> list[dict]:

@@ -500,3 +500,85 @@ def test_patch_recipe_empty_ingredient_returns_422(client):
     assert resp3.status_code == 200
 
 
+def test_root_serves_web_ui_html_without_shadowing_api(client, tmp_path):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert '<div id="root">' in resp.text
+
+    resp_settings = client.get("/settings")
+    assert resp_settings.status_code == 200
+    assert isinstance(resp_settings.json(), dict)
+
+    custom_static = tmp_path / "custom_dist"
+    custom_static.mkdir()
+    (custom_static / "assets").mkdir()
+    (custom_static / "index.html").write_text(
+        '<!doctype html><html><body><div id="root">Custom App</div></body></html>',
+        encoding="utf-8",
+    )
+    (custom_static / "assets" / "app.js").write_text(
+        "console.log('custom');",
+        encoding="utf-8",
+    )
+
+    custom_app = create_app(
+        db_path=str(tmp_path / "custom.db"),
+        static_dir=str(custom_static),
+    )
+    with TestClient(custom_app) as custom_client:
+        r = custom_client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers.get("content-type", "")
+        assert '<div id="root">Custom App</div>' in r.text
+
+        r_asset = custom_client.get("/assets/app.js")
+        assert r_asset.status_code == 200
+        assert "console.log('custom');" in r_asset.text
+
+        r_api = custom_client.get("/settings")
+        assert r_api.status_code == 200
+        assert isinstance(r_api.json(), dict)
+
+
+def test_get_plan_date_range_and_validation(client):
+    recipe_id = _make_recipe(client, "Chili", [{"raw": "beans"}])
+
+    p1 = client.post(
+        "/plan", json={"recipe_id": recipe_id, "date": "2026-10-05"}
+    ).json()["entry_id"]
+    p2 = client.post(
+        "/plan", json={"recipe_id": recipe_id, "date": "2026-10-22"}
+    ).json()["entry_id"]
+
+    resp = client.get("/plan?start_date=2026-10-01&end_date=2026-10-31")
+    assert resp.status_code == 200
+    entries = resp.json()
+    assert [e["id"] for e in entries] == [p1, p2]
+    assert entries[0]["title"] == "Chili"
+    assert entries[0]["date"] == "2026-10-05"
+    assert entries[1]["date"] == "2026-10-22"
+
+    resp_narrow = client.get("/plan?start_date=2026-10-01&end_date=2026-10-10")
+    assert resp_narrow.status_code == 200
+    narrow_entries = resp_narrow.json()
+    assert len(narrow_entries) == 1
+    assert narrow_entries[0]["id"] == p1
+
+    resp_reversed = client.get("/plan?start_date=2026-10-31&end_date=2026-10-01")
+    assert resp_reversed.status_code == 422
+    assert "start_date must be <= end_date" in resp_reversed.json()["detail"]
+
+    resp_only_start = client.get("/plan?start_date=2026-10-01")
+    assert resp_only_start.status_code == 422
+    assert (
+        "Both start_date and end_date must be provided together"
+        in resp_only_start.json()["detail"]
+    )
+
+    resp_only_end = client.get("/plan?end_date=2026-10-31")
+    assert resp_only_end.status_code == 422
+    assert (
+        "Both start_date and end_date must be provided together"
+        in resp_only_end.json()["detail"]
+    )

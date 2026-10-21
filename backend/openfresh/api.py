@@ -391,8 +391,24 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     @router.get("/plan")
     def get_plan(
         week_start: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> list[dict]:
+        if (start_date is None) != (end_date is None):
+            raise HTTPException(
+                status_code=422,
+                detail="Both start_date and end_date must be provided together",
+            )
+        if start_date is not None and end_date is not None:
+            if start_date > end_date:
+                raise HTTPException(
+                    status_code=422,
+                    detail="start_date must be <= end_date",
+                )
+            return planner.get_range(
+                conn, start_date.isoformat(), end_date.isoformat()
+            )
         return planner.get_week(
             conn, week_start.isoformat() if week_start else current_week_start()
         )
