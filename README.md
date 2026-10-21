@@ -29,6 +29,9 @@ curl -s localhost:8000/settings
 Data lives in `./data/openfresh.db` on the host (mounted at `/data` in the
 container), so kitchens survive `docker compose down` and upgrades. The
 service listens on port 8000; a healthcheck polls `GET /settings`.
+Compose also runs an internal `llm` sidecar service (`ollama/ollama:latest`
+with `gemma3n:e4b`) on the private network (no host ports exposed) for
+unstructured recipe extraction fallback.
 
 ## Quickstart (CLI)
 
@@ -64,7 +67,8 @@ Without a running server, the CLI is just a remote — start Compose first
 
 | Command | Description |
 | --- | --- |
-| `openfresh add-recipe <url>` | Create a recipe stub from a URL |
+| `openfresh add-recipe <url> [--title <title>] [--text <raw_text>]` | Ingest a recipe from a webpage, video URL, or raw text |
+| `openfresh review-queue` | List recipes flagged with `needs_review=true` needing manual review |
 | `openfresh recipes` | List all recipes in the cookbook |
 | `openfresh plan [week_start]` | Show the meal plan for a week (defaults to current Monday) |
 | `openfresh plan-add <recipe_id> <date>` | Add a recipe to the plan on `YYYY-MM-DD` |
@@ -85,17 +89,25 @@ Without a running server, the CLI is just a remote — start Compose first
 
 - **Items**: `GET /items`, `POST /items`, `PATCH /items/{item_id}`, `POST /items/alias`
 - **Inventory**: `GET /inventory`, `POST /inventory`, `PATCH /inventory/{inventory_id}`, `DELETE /inventory/{inventory_id}`
-- **Recipes**: `GET /recipes`, `POST /recipes`, `GET /recipes/{recipe_id}`, `POST /recipes/{recipe_id}/ingredients`, `DELETE /recipes/{recipe_id}`
+- **Recipes**: `GET /recipes[?needs_review=true|false]`, `POST /recipes`, `POST /recipes/ingest`, `GET /recipes/{recipe_id}`, `PATCH /recipes/{recipe_id}`, `POST /recipes/{recipe_id}/reingest`, `POST /recipes/{recipe_id}/ingredients`, `DELETE /recipes/{recipe_id}`
 - **Plan**: `GET /plan`, `POST /plan`, `DELETE /plan/{entry_id}`, `POST /plan/{entry_id}/cooked`, `POST /plan/auto-populate`
 - **Grocery List**: `GET /list`
 - **Pricing**: `POST /prices/own`, `POST /prices/estimate`, `GET /prices/resolve?name=...` (supports bulk `package_quantity` & `package_unit` with culinary unit conversion, item categories, and default Open Prices lookup)
 - **Budget**: `GET /budget/{week_start}`, `PUT /budget/{week_start}`, `POST /budget/{week_start}/spend`
 - **Settings**: `GET /settings`, `PUT /settings`
 
+## Recipe Ingest Pipeline (Phase 2)
+
+- **Deterministic-first**: Webpages with `schema.org/Recipe` JSON-LD are parsed directly in-process without calling the LLM.
+- **Video transcript extraction**: Social and video URLs (YouTube, TikTok, Instagram, etc.) use `yt-dlp` to download subtitles and transcripts before structured extraction.
+- **Internal LLM sidecar**: Docker Compose runs an internal `llm` service (`ollama/ollama:latest` with `gemma3n:e4b`) accessible only inside the Compose network at `http://llm:11434/v1` (no host ports exposed).
+- **Never fails loudly**: Any network, format, or LLM error degrades gracefully into a stored recipe with `needs_review = True` and a descriptive `review_notes` message.
+- **Review & correction**: Review flagged recipes with `openfresh review-queue` (or `GET /recipes?needs_review=true`), re-parse pasted text via `POST /recipes/{id}/reingest`, or adjust fields and ingredients with `PATCH /recipes/{id}`.
+
 ## Project Status
 
 - [x] **Core Backend & CLI**: SQLite state layer (WAL), canonical items & aliases, source-tagged inventory, cookbook, layered pricing (own library, Open Prices client, category estimates), grocery list generator, deterministic auto-planner with chooser hook, weekly budget tracking, FastAPI HTTP server, thin CLI client, Docker Compose packaging.
-- [ ] **Recipe & Receipt Ingest Pipeline**: Webpage (`schema.org/Recipe` + local LLM fallback), video transcript (`yt-dlp` + local LLM), and receipt photo extraction.
+- [x] **Recipe Ingest Pipeline**: Webpage (`schema.org/Recipe` + local LLM fallback), video transcript (`yt-dlp` + local LLM), review queue, reingest, and partial recipe patch. (Receipt photo scanning deferred to separate phase).
 - [ ] **Laya Decision Model**: In-process ONNX Runtime integration into the planner's `chooser` hook.
 - [ ] **React Frontend**: Mobile- and desktop-friendly web interface for Planner, Grocery List, Calendar, Cookbook, Kitchen Inventory, Budget, and Settings.
 

@@ -5,6 +5,8 @@ services:
       - "8000:8000"
     environment:
       OPENFRESH_DB: /data/openfresh.db
+      OPENFRESH_LLM_URL: http://llm:11434/v1
+      OPENFRESH_LLM_MODEL: gemma3n:e4b
     volumes:
       - ./data:/data
     healthcheck:
@@ -13,4 +15,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  llm:
+    image: ollama/ollama:latest
+    container_name: openfresh-llm
+    volumes:
+      - ./data/ollama:/root/.ollama
     restart: unless-stopped

@@ -357,3 +357,120 @@ def test_api_category_and_bulk_pricing_flow(client):
     assert lines[0]["item_id"] == milk_id
     assert lines[0]["price"] == pytest.approx(0.25)
     assert lines[0]["price_source"] == "estimate"
+
+
+def test_ingest_empty_body_returns_422(client):
+    resp = client.post("/recipes/ingest", json={})
+    assert resp.status_code == 422
+    assert "Either url or raw_text must be provided" in resp.text
+
+    resp = client.post("/recipes/ingest", json={"url": "   "})
+    assert resp.status_code == 422
+    assert "Either url or raw_text must be provided" in resp.text
+
+    resp = client.post("/recipes/ingest", json={"url": "  ", "raw_text": "  "})
+    assert resp.status_code == 422
+    assert "Either url or raw_text must be provided" in resp.text
+
+
+def test_ingest_and_review_queue_flow(client, monkeypatch):
+    # Set LLM to offline address so it immediately fails to review queue
+    monkeypatch.setenv("OPENFRESH_LLM_URL", "http://127.0.0.1:1/v1")
+
+    # Ingest with raw text
+    resp = client.post(
+        "/recipes/ingest",
+        json={"raw_text": "Garlic Pasta\nBoil pasta\nAdd garlic", "title": "Garlic Pasta"},
+    )
+    assert resp.status_code == 200
+    recipe = resp.json()
+    recipe_id = recipe["id"]
+    assert recipe["needs_review"] is True
+    assert "LLM extraction failed" in (recipe["review_notes"] or "")
+
+    # Check that it appears in GET /recipes?needs_review=true
+    review_queue = client.get("/recipes?needs_review=true").json()
+    assert any(r["id"] == recipe_id for r in review_queue)
+
+    # Check that it does not appear in GET /recipes?needs_review=false
+    clean_recipes = client.get("/recipes?needs_review=false").json()
+    assert not any(r["id"] == recipe_id for r in clean_recipes)
+
+    # Clean up recipe via PATCH /recipes/{id}
+    patch_resp = client.patch(
+        f"/recipes/{recipe_id}",
+        json={
+            "steps": ["Boil pasta in salted water.", "Toss with garlic butter."],
+            "ingredients": [
+                {"raw": "200 g pasta", "name": "pasta", "quantity": 200.0, "unit": "g", "staple": False},
+                {"raw": "2 cloves garlic", "name": "garlic", "quantity": 2.0, "unit": "clove", "staple": False},
+            ],
+            "total_time": "15m",
+            "needs_review": False,
+            "review_notes": None,
+        },
+    )
+    assert patch_resp.status_code == 200
+    patched = patch_resp.json()
+    assert patched["needs_review"] is False
+    assert patched["review_notes"] is None
+    assert patched["total_time"] == "15m"
+    assert len(patched["steps"]) == 2
+    assert len(patched["ingredients"]) == 2
+
+    # Verify it cleared from review queue
+    review_queue_after = client.get("/recipes?needs_review=true").json()
+    assert not any(r["id"] == recipe_id for r in review_queue_after)
+
+    clean_recipes_after = client.get("/recipes?needs_review=false").json()
+    assert any(r["id"] == recipe_id for r in clean_recipes_after)
+
+
+def test_reingest_and_patch_planned_recipe_preserves_plan_fk(client, monkeypatch):
+    # Plan a stub recipe on MONDAY
+    rec_resp = client.post("/recipes", json={"title": "Weekly Stew", "servings": 2})
+    assert rec_resp.status_code == 200
+    recipe_id = rec_resp.json()["recipe_id"]
+
+    plan_resp = client.post("/plan", json={"recipe_id": recipe_id, "date": MONDAY})
+    assert plan_resp.status_code == 200
+
+    # Ensure LLM fails offline gracefully for reingest
+    monkeypatch.setenv("OPENFRESH_LLM_URL", "http://127.0.0.1:1/v1")
+
+    # POST /recipes/{id}/reingest with empty text returns 422
+    assert client.post(f"/recipes/{recipe_id}/reingest", json={"raw_text": "   "}).status_code == 422
+
+    # POST /recipes/{id}/reingest with text updates recipe without breaking FK
+    reingest_resp = client.post(
+        f"/recipes/{recipe_id}/reingest",
+        json={"raw_text": "Stew: 500g beef, 2 carrots. Simmer 2 hours."},
+    )
+    assert reingest_resp.status_code == 200
+    assert reingest_resp.json()["id"] == recipe_id
+
+    # PATCH /recipes/{id} with new ingredients
+    patch_resp = client.patch(
+        f"/recipes/{recipe_id}",
+        json={
+            "ingredients": [
+                {"raw": "500 g beef", "name": "beef", "quantity": 500.0, "unit": "g"},
+                {"raw": "2 carrots", "name": "carrot", "quantity": 2.0, "unit": ""},
+            ],
+            "needs_review": False,
+        },
+    )
+    assert patch_resp.status_code == 200
+
+    # Verify plan is still intact and /list reflects updated ingredients
+    plan = client.get(f"/plan?week_start={MONDAY}").json()
+    assert len(plan) == 1
+    assert plan[0]["recipe_id"] == recipe_id
+
+    lines = client.get(f"/list?week_start={MONDAY}").json()
+    by_name = {line["name"]: line for line in lines}
+    assert "beef" in by_name
+    assert by_name["beef"]["quantity"] == pytest.approx(500.0)
+    assert "carrot" in by_name
+    assert by_name["carrot"]["quantity"] == pytest.approx(2.0)
+

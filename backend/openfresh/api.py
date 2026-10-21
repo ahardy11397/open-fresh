@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from openfresh import (
     budget,
+    db,
+    ingest,
     inventory,
     items,
     listgen,
@@ -60,13 +62,45 @@ class RecipeCreate(BaseModel):
     title: str
     servings: int = Field(default=2, ge=1)
     source_url: str | None = None
+    steps: list[str] | None = None
+    total_time: str | None = None
+    review_notes: str | None = None
 
 
 class IngredientCreate(BaseModel):
     raw: str
+    name: str | None = None
     quantity: float | None = None
     unit: str = ""
     staple: bool = False
+
+
+class IngredientIn(BaseModel):
+    raw: str | None = None
+    name: str | None = None
+    quantity: float | None = None
+    unit: str = ""
+    staple: bool = False
+
+
+class RecipeIngestBody(BaseModel):
+    url: str | None = None
+    raw_text: str | None = None
+    title: str | None = None
+
+
+class RecipeReingestBody(BaseModel):
+    raw_text: str
+
+
+class RecipePatch(BaseModel):
+    title: str | None = None
+    servings: int | None = Field(default=None, ge=1)
+    steps: list[str] | None = None
+    total_time: str | None = None
+    needs_review: bool | None = None
+    review_notes: str | None = None
+    ingredients: list[IngredientIn] | None = None
 
 
 class PlanCreate(BaseModel):
@@ -205,8 +239,11 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     # --- recipes ------------------------------------------------------------
 
     @router.get("/recipes")
-    def get_recipes(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-        return recipes.list_recipes(conn)
+    def get_recipes(
+        needs_review: bool | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> list[dict]:
+        return recipes.list_recipes(conn, needs_review=needs_review)
 
     @router.post("/recipes")
     def post_recipe(
@@ -214,9 +251,49 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     ) -> dict:
         return {
             "recipe_id": recipes.create_recipe(
-                conn, body.title, body.servings, body.source_url
+                conn,
+                body.title,
+                body.servings,
+                body.source_url,
+                steps=body.steps,
+                total_time=body.total_time,
+                review_notes=body.review_notes,
             )
         }
+
+    @router.post("/recipes/ingest")
+    def post_recipe_ingest(
+        body: RecipeIngestBody, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> dict[str, Any]:
+        has_url = bool(body.url and body.url.strip())
+        has_text = bool(body.raw_text and body.raw_text.strip())
+        if not has_url and not has_text:
+            raise HTTPException(
+                status_code=422,
+                detail="Either url or raw_text must be provided",
+            )
+        return ingest.ingest_recipe(
+            conn,
+            url=body.url,
+            raw_text=body.raw_text,
+            title=body.title,
+        )
+
+    @router.post("/recipes/{recipe_id}/reingest")
+    def post_recipe_reingest(
+        recipe_id: int,
+        body: RecipeReingestBody,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        if not body.raw_text or not body.raw_text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="raw_text must not be empty",
+            )
+        updated = ingest.reingest_recipe(conn, recipe_id, body.raw_text)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return updated
 
     @router.get("/recipes/{recipe_id}")
     def get_recipe(
@@ -227,6 +304,52 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
             raise HTTPException(status_code=404, detail="recipe not found")
         return recipe
 
+    @router.patch("/recipes/{recipe_id}")
+    def patch_recipe(
+        recipe_id: int,
+        body: RecipePatch,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        fields = body.model_fields_set
+
+        tt = body.total_time if "total_time" in fields else recipes._UNSET
+        rn = body.review_notes if "review_notes" in fields else recipes._UNSET
+        title = body.title if "title" in fields else None
+        servings = body.servings if "servings" in fields else None
+        steps = body.steps if "steps" in fields else None
+        needs_review = body.needs_review if "needs_review" in fields else None
+
+        ing_dicts: list[dict[str, Any]] | None = None
+        if "ingredients" in fields and body.ingredients is not None:
+            ing_dicts = []
+            for ing in body.ingredients:
+                if ing.name is None and ing.quantity is None and ing.raw:
+                    parsed = ingest.parse_ingredient_line(ing.raw)
+                    ing_dicts.append(parsed)
+                else:
+                    ing_dicts.append({
+                        "raw": ing.raw or ing.name or "",
+                        "name": ing.name,
+                        "quantity": ing.quantity,
+                        "unit": ing.unit,
+                        "staple": ing.staple,
+                    })
+
+        updated = recipes.update_recipe(
+            conn,
+            recipe_id,
+            title=title,
+            servings=servings,
+            steps=steps,
+            total_time=tt,
+            needs_review=needs_review,
+            review_notes=rn,
+            ingredients=ing_dicts,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return updated
+
     @router.post("/recipes/{recipe_id}/ingredients")
     def post_ingredient(
         recipe_id: int,
@@ -234,7 +357,13 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> dict:
         ingredient_id = recipes.add_ingredient(
-            conn, recipe_id, body.raw, body.quantity, body.unit, body.staple
+            conn,
+            recipe_id,
+            body.raw,
+            body.quantity,
+            body.unit,
+            body.staple,
+            item_name=body.name,
         )
         return {"ingredient_id": ingredient_id}
 

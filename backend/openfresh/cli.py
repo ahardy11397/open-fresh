@@ -13,6 +13,7 @@ import json
 import os
 import sys
 from datetime import date, timedelta
+from typing import Any
 
 import httpx
 
@@ -31,8 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sp = sub.add_parser("add-recipe", help="create an empty recipe from a URL")
+    sp = sub.add_parser("add-recipe", help="ingest a recipe from a URL")
     sp.add_argument("url")
+    sp.add_argument("--title", default=None, help="Recipe title override")
+    sp.add_argument("--text", default=None, help="Raw recipe text or caption")
+
+    sub.add_parser("review-queue", help="list recipes that need manual review")
 
     sub.add_parser("recipes", help="list recipes")
 
@@ -104,10 +109,28 @@ def _run(client: httpx.Client, args: argparse.Namespace) -> None:
     """Dispatch one HTTP request for the parsed subcommand."""
     cmd = args.command
     if cmd == "add-recipe":
-        title = args.url.rstrip("/").rsplit("/", 1)[-1] or args.url
-        resp = client.post(
-            "/recipes", json={"title": title, "source_url": args.url}
-        )
+        payload: dict[str, Any] = {"url": args.url}
+        if getattr(args, "title", None):
+            payload["title"] = args.title
+        if getattr(args, "text", None):
+            payload["raw_text"] = args.text
+        resp = client.post("/recipes/ingest", json=payload)
+        resp.raise_for_status()
+        r = resp.json()
+        flag = " (needs review)" if r.get("needs_review") else ""
+        print(f"Added recipe #{r['id']}: {r['title']}{flag}")
+        return
+    elif cmd == "review-queue":
+        resp = client.get("/recipes", params={"needs_review": "true"})
+        resp.raise_for_status()
+        recipes_list = resp.json()
+        if not recipes_list:
+            print("No recipes need review.")
+        else:
+            for r in recipes_list:
+                notes = f" — {r['review_notes']}" if r.get("review_notes") else ""
+                print(f"#{r['id']}: {r['title']}{notes}")
+        return
     elif cmd == "recipes":
         resp = client.get("/recipes")
     elif cmd == "plan":
