@@ -6,9 +6,13 @@ needs_review flag; ingredients normalize through the canonical item table.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from typing import Any
 
 from openfresh import items
+
+_UNSET = object()
 
 
 def create_recipe(
@@ -16,11 +20,27 @@ def create_recipe(
     title: str,
     servings: int = 2,
     source_url: str | None = None,
+    *,
+    steps: list[str] | None = None,
+    total_time: str | None = None,
+    needs_review: bool = False,
+    review_notes: str | None = None,
 ) -> int:
     """Insert a recipe and return its id. Title whitespace is collapsed."""
+    steps_json = json.dumps(steps or [])
     cur = conn.execute(
-        "INSERT INTO recipes (title, servings, source_url) VALUES (?, ?, ?)",
-        (" ".join(title.split()), servings, source_url),
+        """INSERT INTO recipes
+             (title, servings, source_url, steps, total_time, needs_review, review_notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            " ".join(title.split()),
+            servings,
+            source_url,
+            steps_json,
+            total_time,
+            int(needs_review),
+            review_notes,
+        ),
     )
     conn.commit()
     recipe_id = cur.lastrowid
@@ -32,16 +52,18 @@ def add_ingredient(
     conn: sqlite3.Connection,
     recipe_id: int,
     raw: str,
-    quantity: float | None,
+    quantity: float | None = None,
     unit: str = "",
     staple: bool = False,
+    *,
+    item_name: str | None = None,
 ) -> int:
     """Add an ingredient to a recipe, normalizing raw through the item table.
 
     Returns the recipe_ingredient row id. The raw text is stored with
     collapsed whitespace; item-level normalization happens in items.
     """
-    item_id = items.get_or_create_with_alias(conn, raw)
+    item_id = items.get_or_create_with_alias(conn, item_name or raw)
     clean_raw = " ".join(raw.split())
     cur = conn.execute(
         """INSERT INTO recipe_ingredients
@@ -62,7 +84,8 @@ def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
     (item_name) alongside the original raw text.
     """
     row = conn.execute(
-        "SELECT id, title, servings, source_url, needs_review, created_at"
+        "SELECT id, title, servings, source_url, steps, total_time,"
+        " needs_review, review_notes, created_at"
         " FROM recipes WHERE id = ?",
         (recipe_id,),
     ).fetchone()
@@ -70,6 +93,13 @@ def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
         return None
     recipe = dict(row)
     recipe["needs_review"] = bool(recipe["needs_review"])
+    if recipe.get("steps"):
+        try:
+            recipe["steps"] = json.loads(recipe["steps"])
+        except (json.JSONDecodeError, TypeError):
+            recipe["steps"] = []
+    else:
+        recipe["steps"] = []
     recipe["ingredients"] = [
         {
             "id": ing["id"],
@@ -93,15 +123,114 @@ def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
     return recipe
 
 
-def list_recipes(conn: sqlite3.Connection) -> list[dict]:
+def list_recipes(
+    conn: sqlite3.Connection, needs_review: bool | None = None
+) -> list[dict]:
     """Return all recipes (without ingredients), ordered by title."""
-    return [
-        dict(row)
-        for row in conn.execute(
-            "SELECT id, title, servings, source_url, needs_review, created_at"
+    if needs_review is not None:
+        rows = conn.execute(
+            "SELECT id, title, servings, source_url, steps, total_time,"
+            " needs_review, review_notes, created_at"
+            " FROM recipes WHERE needs_review = ? ORDER BY title",
+            (int(needs_review),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, title, servings, source_url, steps, total_time,"
+            " needs_review, review_notes, created_at"
             " FROM recipes ORDER BY title"
+        ).fetchall()
+
+    results: list[dict] = []
+    for row in rows:
+        rec = dict(row)
+        rec["needs_review"] = bool(rec["needs_review"])
+        if rec.get("steps"):
+            try:
+                rec["steps"] = json.loads(rec["steps"])
+            except (json.JSONDecodeError, TypeError):
+                rec["steps"] = []
+        else:
+            rec["steps"] = []
+        results.append(rec)
+    return results
+
+
+def update_recipe(
+    conn: sqlite3.Connection,
+    recipe_id: int,
+    *,
+    title: str | None = None,
+    servings: int | None = None,
+    source_url: Any = _UNSET,
+    steps: list[str] | None = None,
+    total_time: Any = _UNSET,
+    needs_review: bool | None = None,
+    review_notes: Any = _UNSET,
+    ingredients: list[dict] | None = None,
+) -> dict | None:
+    """Update specified recipe fields in place and return get_recipe(conn, recipe_id)."""
+    exists = conn.execute(
+        "SELECT 1 FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+    if exists is None:
+        return None
+
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if title is not None:
+        updates.append("title = ?")
+        params.append(" ".join(title.split()))
+    if servings is not None:
+        updates.append("servings = ?")
+        params.append(servings)
+    if source_url is not _UNSET:
+        updates.append("source_url = ?")
+        params.append(source_url)
+    if steps is not None:
+        updates.append("steps = ?")
+        params.append(json.dumps(steps))
+    if total_time is not _UNSET:
+        updates.append("total_time = ?")
+        params.append(total_time)
+    if needs_review is not None:
+        updates.append("needs_review = ?")
+        params.append(int(needs_review))
+    if review_notes is not _UNSET:
+        updates.append("review_notes = ?")
+        params.append(review_notes)
+
+    if updates:
+        params.append(recipe_id)
+        conn.execute(
+            f"UPDATE recipes SET {', '.join(updates)} WHERE id = ?",
+            params,
         )
-    ]
+
+    if ingredients is not None:
+        conn.execute(
+            "DELETE FROM recipe_ingredients WHERE recipe_id = ?",
+            (recipe_id,),
+        )
+        for ing in ingredients:
+            raw = ing.get("raw") or ing.get("name") or ing.get("item_name") or ""
+            item_name = ing.get("item_name") or ing.get("name")
+            quantity = ing.get("quantity")
+            unit = ing.get("unit", "")
+            staple = bool(ing.get("staple", False))
+            add_ingredient(
+                conn,
+                recipe_id,
+                raw=raw,
+                quantity=quantity,
+                unit=unit,
+                staple=staple,
+                item_name=item_name,
+            )
+
+    conn.commit()
+    return get_recipe(conn, recipe_id)
 
 
 def delete_recipe(conn: sqlite3.Connection, recipe_id: int) -> None:

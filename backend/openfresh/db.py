@@ -46,6 +46,9 @@ _SCHEMA_STATEMENTS: list[str] = [
         servings INTEGER NOT NULL DEFAULT 2,
         source_url TEXT,
         needs_review INTEGER NOT NULL DEFAULT 0,
+        steps TEXT NOT NULL DEFAULT '[]',
+        total_time TEXT,
+        review_notes TEXT,
         created_at TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS recipe_ingredients (
@@ -116,6 +119,9 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("prices_own", "package_unit", "TEXT NOT NULL DEFAULT ''"),
     ("price_estimates", "package_quantity", "REAL NOT NULL DEFAULT 1.0"),
     ("price_estimates", "package_unit", "TEXT NOT NULL DEFAULT ''"),
+    ("recipes", "steps", "TEXT NOT NULL DEFAULT '[]'"),
+    ("recipes", "total_time", "TEXT"),
+    ("recipes", "review_notes", "TEXT"),
 ]
 
 

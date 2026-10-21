@@ -80,3 +80,141 @@ def test_create_defaults_and_listing(tmp_path):
     listed = recipes.list_recipes(conn)
     assert listed[0]["id"] == first
     assert listed[0]["servings"] == 2
+
+
+def test_create_recipe_with_steps_time_and_review(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    rid = recipes.create_recipe(
+        conn,
+        "Pasta Simple",
+        steps=["Boil water", "Simmer"],
+        total_time="25m",
+        needs_review=True,
+        review_notes="check quantities",
+    )
+    rec = recipes.get_recipe(conn, rid)
+    assert rec["title"] == "Pasta Simple"
+    assert rec["steps"] == ["Boil water", "Simmer"]
+    assert rec["total_time"] == "25m"
+    assert rec["needs_review"] is True
+    assert rec["review_notes"] == "check quantities"
+
+    flagged = recipes.list_recipes(conn, needs_review=True)
+    assert len(flagged) == 1
+    assert flagged[0]["id"] == rid
+    assert flagged[0]["steps"] == ["Boil water", "Simmer"]
+    assert flagged[0]["total_time"] == "25m"
+    assert flagged[0]["needs_review"] is True
+    assert flagged[0]["review_notes"] == "check quantities"
+
+    unflagged = recipes.list_recipes(conn, needs_review=False)
+    assert unflagged == []
+
+
+def test_add_ingredient_uses_cleaned_item_name(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    rid = recipes.create_recipe(conn, "Garlic Dish")
+    ing_id = recipes.add_ingredient(
+        conn, rid, "2 cloves garlic, minced", 2.0, "clove", item_name="garlic"
+    )
+    rec = recipes.get_recipe(conn, rid)
+    assert len(rec["ingredients"]) == 1
+    ing = rec["ingredients"][0]
+    assert ing["id"] == ing_id
+    assert ing["raw"] == "2 cloves garlic, minced"
+    assert ing["item_name"] == "garlic"
+    assert ing["quantity"] == 2.0
+    assert ing["unit"] == "clove"
+
+
+def test_update_recipe_replaces_fields_and_ingredients(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    rid = recipes.create_recipe(
+        conn,
+        "Draft Title",
+        steps=["Draft step"],
+        total_time="10m",
+        needs_review=True,
+        review_notes="initial notes",
+    )
+    recipes.add_ingredient(conn, rid, "old ingredient", 1.0, "tbsp")
+
+    updated = recipes.update_recipe(
+        conn,
+        rid,
+        title="Fixed Title",
+        needs_review=False,
+        review_notes=None,
+        steps=["Step 1"],
+        ingredients=[
+            {
+                "raw": "1 cup rice",
+                "name": "rice",
+                "quantity": 1.0,
+                "unit": "cup",
+                "staple": False,
+            }
+        ],
+    )
+    assert updated is not None
+    assert updated["id"] == rid
+    assert updated["title"] == "Fixed Title"
+    assert updated["needs_review"] is False
+    assert updated["review_notes"] is None
+    assert updated["steps"] == ["Step 1"]
+    assert updated["total_time"] == "10m"
+
+    assert len(updated["ingredients"]) == 1
+    ing = updated["ingredients"][0]
+    assert ing["raw"] == "1 cup rice"
+    assert ing["item_name"] == "rice"
+    assert ing["quantity"] == 1.0
+    assert ing["unit"] == "cup"
+    assert ing["staple"] is False
+
+    stored = recipes.get_recipe(conn, rid)
+    assert stored == updated
+
+
+def test_update_recipe_partial_and_clear_total_time(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    rid = recipes.create_recipe(
+        conn,
+        "Curry",
+        total_time="45m",
+        review_notes="tasty",
+    )
+    # Clear total_time with None, leave review_notes untouched by omitting it
+    updated = recipes.update_recipe(conn, rid, total_time=None)
+    assert updated is not None
+    assert updated["total_time"] is None
+    assert updated["review_notes"] == "tasty"
+
+    # Non-existent recipe returns None
+    assert recipes.update_recipe(conn, 99999, title="Nope") is None
+
+
+def test_schema_migration_recipes_columns(tmp_path):
+    db_path = str(tmp_path / "legacy.db")
+    conn = db.get_conn(db_path)
+    # Create legacy recipes table without steps, total_time, review_notes
+    conn.execute(
+        """CREATE TABLE recipes (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            servings INTEGER NOT NULL DEFAULT 2,
+            source_url TEXT,
+            needs_review INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT
+        )"""
+    )
+    conn.commit()
+
+    # Run init_db which should apply migrations
+    db.init_db(conn)
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(recipes)")}
+    assert "steps" in cols
+    assert "total_time" in cols
+    assert "review_notes" in cols
+
