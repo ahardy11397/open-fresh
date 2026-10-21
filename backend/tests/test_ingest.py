@@ -848,3 +848,183 @@ def test_reingest_recipe(tmp_path):
     assert reingest_recipe(conn, 9999, "some text", llm_client=llm_client) is None
 
 
+def test_webpage_incomplete_jsonld_falls_back_to_llm(tmp_path):
+    # Page contains stub Recipe JSON-LD with only title, missing ingredients and steps
+    html_doc = """
+    <html>
+    <head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Recipe",
+        "name": "Stub Pasta",
+        "recipeIngredient": [],
+        "recipeInstructions": []
+      }
+      </script>
+    </head>
+    <body>
+      <h1>Stub Pasta</h1>
+      <p>Ingredients: 200g penne, 2 tbsp pesto.</p>
+      <p>Boil penne and toss with pesto.</p>
+    </body>
+    </html>
+    """
+
+    def web_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html_doc)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(web_handler))
+
+    llm_called = False
+
+    def llm_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal llm_called
+        llm_called = True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({
+                                "title": "Stub Pasta",
+                                "servings": 2,
+                                "total_time": "15m",
+                                "ingredients": [
+                                    {"raw": "200g penne", "name": "penne", "quantity": 200.0, "unit": "g", "staple": False},
+                                    {"raw": "2 tbsp pesto", "name": "pesto", "quantity": 2.0, "unit": "tbsp", "staple": False},
+                                ],
+                                "steps": ["Boil penne and toss with pesto."],
+                                "low_confidence": False,
+                            }),
+                        }
+                    }
+                ]
+            },
+        )
+
+    llm_client = httpx.Client(transport=httpx.MockTransport(llm_handler))
+
+    conn = _fresh_conn(tmp_path)
+    recipe = ingest_recipe(
+        conn,
+        url="https://example.com/stub-pasta",
+        http_client=http_client,
+        llm_client=llm_client,
+    )
+    assert llm_called is True
+    assert recipe["title"] == "Stub Pasta"
+    assert recipe["servings"] == 2
+    assert recipe["needs_review"] is False
+    assert len(recipe["ingredients"]) == 2
+    assert recipe["steps"] == ["Boil penne and toss with pesto."]
+
+
+def test_webpage_incomplete_jsonld_preserves_partial_when_llm_fails(tmp_path):
+    # Page contains partial Recipe JSON-LD (has 1 ingredient, but 0 steps)
+    html_doc = """
+    <html>
+    <head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Recipe",
+        "name": "Partial Soup",
+        "recipeIngredient": ["4 cups broth"],
+        "recipeInstructions": []
+      }
+      </script>
+    </head>
+    <body>
+      <h1>Partial Soup</h1>
+    </body>
+    </html>
+    """
+
+    def web_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=html_doc)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(web_handler))
+
+    def llm_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    llm_client = httpx.Client(transport=httpx.MockTransport(llm_handler))
+
+    conn = _fresh_conn(tmp_path)
+    recipe = ingest_recipe(
+        conn,
+        url="https://example.com/partial-soup",
+        http_client=http_client,
+        llm_client=llm_client,
+    )
+    assert recipe["title"] == "Partial Soup"
+    assert recipe["needs_review"] is True
+    # Schema.org had 1 ingredient preserved
+    assert len(recipe["ingredients"]) == 1
+    assert recipe["ingredients"][0]["raw"] == "4 cups broth"
+    assert "Missing instructions" in recipe["review_notes"]
+    assert "LLM extraction failed" in recipe["review_notes"]
+
+
+def test_extract_video_text_avoids_duplicate_captions():
+    def fake_runner(url):
+        return {
+            "title": "Cooking Video",
+            "description": "Video description.",
+            "subtitles": "Manual subtitle line 1.\nManual subtitle line 2.",
+            "automatic_captions": "Auto caption line 1.\nAuto caption line 2.",
+        }
+
+    text, title, error = extract_video_text("https://youtu.be/test1234", ytdlp_runner=fake_runner)
+    assert error is None
+    assert title == "Cooking Video"
+    assert "Manual subtitle line 1." in text
+    assert "Auto caption line 1." not in text
+
+
+def test_extract_with_llm_cleans_ingredient_name_descriptors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({
+                                "title": "Garlic Dressing",
+                                "servings": 2,
+                                "total_time": "5m",
+                                "ingredients": [
+                                    {"name": "garlic, finely minced", "quantity": 2, "unit": "cloves"},
+                                    {"name": "olive oil, extra virgin", "quantity": 3, "unit": "tbsp", "staple": True},
+                                ],
+                                "steps": ["Whisk together."],
+                                "low_confidence": False,
+                            }),
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    res = extract_with_llm("make garlic dressing", llm_client=client)
+    assert res["needs_review"] is False
+    assert len(res["ingredients"]) == 2
+    garlic = res["ingredients"][0]
+    assert garlic["name"] == "garlic"
+    assert garlic["unit"] == "clove"
+    assert garlic["quantity"] == 2.0
+    assert garlic["raw"] == "2 cloves garlic, finely minced"
+
+    oil = res["ingredients"][1]
+    assert oil["name"] == "olive oil"
+    assert oil["unit"] == "tbsp"
+    assert oil["staple"] is True
+
+
+

@@ -589,31 +589,21 @@ def extract_video_text(
     video_title = str(info["title"]).strip() if info.get("title") else None
     description = str(info["description"]).strip() if info.get("description") else ""
 
-    sub_parts: list[str] = []
-    if info.get("transcript"):
-        t = _extract_subtitle_text(info["transcript"])
-        if t:
-            sub_parts.append(t)
-    if info.get("requested_subtitles"):
-        t = _extract_subtitle_text(info["requested_subtitles"])
-        if t:
-            sub_parts.append(t)
-    if info.get("subtitles"):
-        t = _extract_subtitle_text(info["subtitles"])
-        if t:
-            sub_parts.append(t)
-    if info.get("automatic_captions"):
-        t = _extract_subtitle_text(info["automatic_captions"])
-        if t:
-            sub_parts.append(t)
+    sub_text: str | None = None
+    for sub_key in ("transcript", "requested_subtitles", "subtitles", "automatic_captions"):
+        if info.get(sub_key):
+            t = _extract_subtitle_text(info[sub_key])
+            if t:
+                sub_text = t
+                break
 
     parts: list[str] = []
     if video_title:
         parts.append(video_title)
     if description:
         parts.append(description)
-    if sub_parts:
-        parts.append("\n\n".join(sub_parts))
+    if sub_text:
+        parts.append(sub_text)
 
     combined = "\n\n".join(parts).strip()
     if not combined:
@@ -738,6 +728,7 @@ def extract_with_llm(
         elif isinstance(ing, dict):
             raw_val = str(ing.get("raw") or "").strip()
             name_val = str(ing.get("name") or "").strip()
+            name_val = re.sub(r"^of\s+", "", name_val, flags=re.IGNORECASE).split(",")[0].strip()
             if not name_val:
                 ingredients.append(parse_ingredient_line(raw_val))
             else:
@@ -757,12 +748,16 @@ def extract_with_llm(
                         qty_val = None
 
                 if not raw_val:
+                    original_name = str(ing.get("name") or "").strip()
+                    unit_raw = str(ing.get("unit") or "").strip()
                     parts = []
                     if qty_val is not None:
                         parts.append(str(int(qty_val)) if qty_val == int(qty_val) else str(qty_val))
-                    if unit_val:
+                    if unit_raw:
+                        parts.append(unit_raw)
+                    elif unit_val:
                         parts.append(unit_val)
-                    parts.append(name_val)
+                    parts.append(original_name or name_val)
                     raw_val = " ".join(parts)
 
                 ingredients.append({
@@ -874,15 +869,44 @@ def ingest_recipe(
 
         if html_content is not None:
             schema_recipe = extract_schema_org_recipe(html_content)
-            if schema_recipe is not None:
+            is_complete_jsonld = (
+                schema_recipe is not None
+                and schema_recipe.get("title")
+                and schema_recipe.get("title") != "Untitled Recipe"
+                and bool(schema_recipe.get("ingredients"))
+                and bool(schema_recipe.get("steps"))
+            )
+            if is_complete_jsonld:
                 extracted = schema_recipe
             else:
                 page_text, page_title = extract_html_text_and_title(html_content)
-                extracted = extract_with_llm(
+                fallback_title_to_use = (
+                    title
+                    or (schema_recipe.get("title") if schema_recipe and schema_recipe.get("title") != "Untitled Recipe" else None)
+                    or page_title
+                    or clean_url
+                )
+                llm_extracted = extract_with_llm(
                     page_text,
-                    fallback_title=title or page_title or clean_url,
+                    fallback_title=fallback_title_to_use,
                     llm_client=llm_client,
                 )
+                if (
+                    schema_recipe is not None
+                    and not llm_extracted.get("ingredients")
+                    and not llm_extracted.get("steps")
+                    and (schema_recipe.get("ingredients") or schema_recipe.get("steps"))
+                ):
+                    extracted = schema_recipe
+                    combined_notes = []
+                    if schema_recipe.get("review_notes"):
+                        combined_notes.append(schema_recipe["review_notes"])
+                    if llm_extracted.get("review_notes"):
+                        combined_notes.append(llm_extracted["review_notes"])
+                    extracted["needs_review"] = True
+                    extracted["review_notes"] = "; ".join(combined_notes) if combined_notes else "Incomplete recipe"
+                else:
+                    extracted = llm_extracted
         else:
             if clean_text:
                 extracted = extract_with_llm(
