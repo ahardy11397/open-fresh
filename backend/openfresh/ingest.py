@@ -848,7 +848,8 @@ def extract_with_llm(
         if llm_client is not None:
             resp = llm_client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
         else:
-            with httpx.Client(timeout=60.0) as client:
+            timeout_s = float(os.environ.get("OPENFRESH_LLM_TIMEOUT", "300.0"))
+            with httpx.Client(timeout=timeout_s) as client:
                 resp = client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
 
         if resp.status_code >= 400:

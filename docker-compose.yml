@@ -9,6 +9,7 @@ services:
       OPENFRESH_DB: /data/openfresh.db
       OPENFRESH_LLM_URL: http://llm:11434/v1
       OPENFRESH_LLM_MODEL: gemma3n:e4b
+      OPENFRESH_LLM_TIMEOUT: 300
     volumes:
       - ./data:/data
     healthcheck:
