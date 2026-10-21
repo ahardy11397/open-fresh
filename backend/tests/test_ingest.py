@@ -1,5 +1,10 @@
 import pytest
-from openfresh.ingest import parse_ingredient_line, parse_iso_duration
+from openfresh.ingest import (
+    extract_html_text_and_title,
+    extract_schema_org_recipe,
+    parse_ingredient_line,
+    parse_iso_duration,
+)
 
 
 def test_parse_ingredient_line_fractions_and_prep_notes():
@@ -229,3 +234,235 @@ def test_parse_iso_duration():
     assert parse_iso_duration("   ") is None
     assert parse_iso_duration("30 mins") == "30 mins"
     assert parse_iso_duration("1 hour 15 minutes") == "1 hour 15 minutes"
+
+
+def test_extract_schema_org_recipe_complete():
+    html_doc = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Best Chili Recipe - Food Blog</title>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "name": "Food Blog"
+          },
+          {
+            "@type": "Recipe",
+            "name": "Chili",
+            "recipeYield": "4 servings",
+            "totalTime": "PT1H15M",
+            "recipeIngredient": [
+              "500 g ground beef",
+              "1 tsp salt"
+            ],
+            "recipeInstructions": [
+              {"@type": "HowToStep", "text": "Brown beef."},
+              {"@type": "HowToStep", "text": "Simmer."}
+            ]
+          }
+        ]
+      }
+      </script>
+    </head>
+    <body><h1>Chili</h1></body>
+    </html>
+    """
+    res = extract_schema_org_recipe(html_doc)
+    assert res is not None
+    assert res["title"] == "Chili"
+    assert res["servings"] == 4
+    assert res["total_time"] == "1h 15m"
+    assert len(res["ingredients"]) == 2
+    assert res["ingredients"][0]["name"] == "ground beef"
+    assert res["ingredients"][0]["quantity"] == 500.0
+    assert res["ingredients"][0]["unit"] == "g"
+    assert res["ingredients"][0]["staple"] is False
+    assert res["ingredients"][1]["name"] == "salt"
+    assert res["ingredients"][1]["quantity"] == 1.0
+    assert res["ingredients"][1]["unit"] == "tsp"
+    assert res["ingredients"][1]["staple"] is True
+    assert res["steps"] == ["Brown beef.", "Simmer."]
+    assert res["needs_review"] is False
+    assert res["review_notes"] is None
+
+
+def test_malformed_and_non_recipe_jsonld_falls_back():
+    html_doc = """
+    <html>
+    <head>
+      <script type="application/ld+json">
+        { invalid json here ...
+      </script>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Some Site"
+      }
+      </script>
+    </head>
+    <body><p>Hello world</p></body>
+    </html>
+    """
+    res = extract_schema_org_recipe(html_doc)
+    assert res is None
+
+
+def test_extract_html_text_and_title():
+    html_doc = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Quick &amp; Easy Pancakes</title>
+      <style>body { font-family: sans-serif; }</style>
+      <script>console.log("analytics");</script>
+    </head>
+    <body>
+      <noscript><p>Please enable JS</p></noscript>
+      <svg><path d="M0 0"/></svg>
+      <h1>Delicious Pancakes</h1>
+      <p>Mix 1 cup flour with 1 cup milk.</p>
+    </body>
+    </html>
+    """
+    text, title = extract_html_text_and_title(html_doc)
+    assert title == "Quick & Easy Pancakes"
+    assert "console.log" not in text
+    assert "font-family" not in text
+    assert "Please enable JS" not in text
+    assert "M0 0" not in text
+    assert "Delicious Pancakes" in text
+    assert "Mix 1 cup flour with 1 cup milk." in text
+
+
+def test_extract_schema_org_recipe_direct_and_type_list():
+    html_doc = """
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": ["ItemPage", "Recipe"],
+      "name": "Guacamole",
+      "recipeYield": 6,
+      "prepTime": "PT15M",
+      "recipeIngredient": [
+        "3 avocados",
+        "1 lime"
+      ],
+      "recipeInstructions": "Mash avocados.\\nSqueeze lime."
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_doc)
+    assert res is not None
+    assert res["title"] == "Guacamole"
+    assert res["servings"] == 6
+    assert res["total_time"] == "15m"
+    assert len(res["ingredients"]) == 2
+    assert res["steps"] == ["Mash avocados.", "Squeeze lime."]
+    assert res["needs_review"] is False
+    assert res["review_notes"] is None
+
+
+def test_extract_schema_org_recipe_howto_sections_and_html_steps():
+    html_doc = """
+    <script type="application/ld+json">
+    {
+      "@type": "https://schema.org/Recipe",
+      "name": "Fancy Pasta",
+      "recipeYield": ["4 servings"],
+      "cookTime": "PT20M",
+      "recipeIngredient": ["200 g pasta"],
+      "recipeInstructions": [
+        {
+          "@type": "HowToSection",
+          "name": "Prep",
+          "itemListElement": [
+            {"@type": "HowToStep", "text": "<p>Boil salted water &amp; add pasta.</p>"}
+          ]
+        },
+        {
+          "@type": "HowToSection",
+          "name": "Cook",
+          "itemListElement": [
+            {"@type": "HowToStep", "text": "Drain &amp; serve."}
+          ]
+        }
+      ]
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_doc)
+    assert res is not None
+    assert res["title"] == "Fancy Pasta"
+    assert res["steps"] == ["Boil salted water & add pasta.", "Drain & serve."]
+
+
+def test_extract_schema_org_recipe_needs_review_flags():
+    # 1. Missing ingredients
+    html_no_ing = """
+    <script type="application/ld+json">
+    {
+      "@type": "Recipe",
+      "name": "Mystery",
+      "recipeIngredient": [],
+      "recipeInstructions": ["Do something."]
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_no_ing)
+    assert res is not None
+    assert res["needs_review"] is True
+    assert "Missing ingredients" in res["review_notes"]
+
+    # 2. Missing instructions
+    html_no_steps = """
+    <script type="application/ld+json">
+    {
+      "@type": "Recipe",
+      "name": "Mystery 2",
+      "recipeIngredient": ["1 apple"],
+      "recipeInstructions": []
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_no_steps)
+    assert res is not None
+    assert res["needs_review"] is True
+    assert "Missing instructions" in res["review_notes"]
+
+    # 3. Non-staple missing quantity
+    html_no_qty = """
+    <script type="application/ld+json">
+    {
+      "@type": "Recipe",
+      "name": "Herbed Butter",
+      "recipeIngredient": ["1 stick butter", "fresh parsley, chopped"],
+      "recipeInstructions": ["Mix well."]
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_no_qty)
+    assert res is not None
+    assert res["needs_review"] is True
+    assert "One or more non-staple ingredients missing quantity" in res["review_notes"]
+
+    # 4. Missing name defaults to "Untitled Recipe" with review note
+    html_no_title = """
+    <script type="application/ld+json">
+    {
+      "@type": "Recipe",
+      "recipeIngredient": ["2 eggs"],
+      "recipeInstructions": ["Fry eggs."]
+    }
+    </script>
+    """
+    res = extract_schema_org_recipe(html_no_title)
+    assert res is not None
+    assert res["title"] == "Untitled Recipe"
+    assert res["needs_review"] is True
+    assert "Missing recipe title" in res["review_notes"]
+
