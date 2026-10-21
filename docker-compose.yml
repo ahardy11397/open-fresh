@@ -20,6 +20,7 @@ services:
   llm:
     image: ollama/ollama:latest
     container_name: openfresh-llm
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull gemma3n:e4b && wait"]
     volumes:
       - ./data/ollama:/root/.ollama
     restart: unless-stopped

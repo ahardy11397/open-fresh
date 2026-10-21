@@ -30,8 +30,8 @@ def create_recipe(
     steps_json = json.dumps(steps or [])
     cur = conn.execute(
         """INSERT INTO recipes
-             (title, servings, source_url, steps, total_time, needs_review, review_notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+             (title, servings, source_url, steps, total_time, needs_review, review_notes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
         (
             " ".join(title.split()),
             servings,

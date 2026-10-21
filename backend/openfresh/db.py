@@ -16,7 +16,7 @@ _SCHEMA_STATEMENTS: list[str] = [
         id INTEGER PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
         category TEXT,
-        created_at TEXT
+        created_at TEXT DEFAULT (datetime('now'))
     )""",
     """CREATE TABLE IF NOT EXISTS item_aliases (
         alias TEXT PRIMARY KEY,
@@ -28,7 +28,7 @@ _SCHEMA_STATEMENTS: list[str] = [
         location TEXT NOT NULL CHECK(location IN ('pantry','fridge','freezer')),
         quantity REAL NOT NULL,
         unit TEXT NOT NULL DEFAULT '',
-        updated_at TEXT,
+        updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(item_id, location)
     )""",
     """CREATE TABLE IF NOT EXISTS inventory_events (
@@ -38,7 +38,7 @@ _SCHEMA_STATEMENTS: list[str] = [
         delta REAL NOT NULL,
         source TEXT NOT NULL,
         note TEXT,
-        created_at TEXT
+        created_at TEXT DEFAULT (datetime('now'))
     )""",
     """CREATE TABLE IF NOT EXISTS recipes (
         id INTEGER PRIMARY KEY,
@@ -49,7 +49,7 @@ _SCHEMA_STATEMENTS: list[str] = [
         steps TEXT NOT NULL DEFAULT '[]',
         total_time TEXT,
         review_notes TEXT,
-        created_at TEXT
+        created_at TEXT DEFAULT (datetime('now'))
     )""",
     """CREATE TABLE IF NOT EXISTS recipe_ingredients (
         id INTEGER PRIMARY KEY,
@@ -67,7 +67,7 @@ _SCHEMA_STATEMENTS: list[str] = [
         slot TEXT,
         servings_override INTEGER,
         cooked INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT
+        created_at TEXT DEFAULT (datetime('now'))
     )""",
     """CREATE TABLE IF NOT EXISTS prices_own (
         id INTEGER PRIMARY KEY,
@@ -136,4 +136,5 @@ def init_db(conn: sqlite3.Connection) -> None:
         }
         if col not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+    conn.execute("UPDATE recipes SET created_at = datetime('now') WHERE created_at IS NULL")
     conn.commit()

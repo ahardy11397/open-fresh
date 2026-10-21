@@ -18,13 +18,77 @@ STAPLE_NAMES = {
     "salt",
     "kosher salt",
     "sea salt",
+    "table salt",
+    "flaky sea salt",
+    "fine sea salt",
+    "coarse kosher salt",
     "pepper",
     "black pepper",
+    "ground black pepper",
+    "freshly ground black pepper",
+    "cracked black pepper",
+    "white pepper",
+    "salt and pepper",
+    "salt & pepper",
     "water",
+    "tap water",
+    "warm water",
+    "cold water",
+    "boiling water",
+    "ice water",
     "olive oil",
+    "extra-virgin olive oil",
+    "extra virgin olive oil",
     "vegetable oil",
     "cooking oil",
+    "canola oil",
+    "neutral oil",
+    "avocado oil",
+    "sunflower oil",
 }
+
+_DEFAULT_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _strip_parentheticals(text: str) -> str:
+    """Remove balanced/nested parenthetical annotations and collapse spaces."""
+    prev = None
+    cur = text
+    while prev != cur:
+        prev = cur
+        cur = re.sub(r"\([^()]*\)", " ", cur)
+    cur = cur.replace("(", " ").replace(")", " ")
+    return " ".join(cur.split())
+
+
+def _clean_ingredient_name(text: str) -> str:
+    """Strip leading 'of', dual-unit '/ <qty> <unit>' prefixes, and trailing comma prep notes."""
+    cleaned = _strip_parentheticals(text)
+    cleaned = re.sub(
+        r"^/\s*\d+(?:\.\d+)?\s*(?:fl\.?\s*oz\.?|[a-zA-Z.]+)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^of\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.split(",")[0].strip()
+    return " ".join(cleaned.split())
+
+
+def _is_staple_name(name: str) -> bool:
+    low = name.lower().strip()
+    if low in STAPLE_NAMES:
+        return True
+    if low.startswith(("kosher salt or ", "salt or ", "sea salt or ")):
+        return True
+    return False
 
 UNIT_ALIASES = {
     "cup": "cup",
@@ -112,7 +176,7 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
             "staple": bool,
         }
     """
-    s = raw.strip()
+    s = _strip_parentheticals(raw.strip())
     if not s:
         return {
             "raw": raw,
@@ -180,9 +244,7 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
         )
         if m_multi:
             unit = "fl oz"
-            after_token = m_multi.group(2)
-            name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
-            name = name_part.split(",")[0].strip()
+            name = _clean_ingredient_name(m_multi.group(2))
             quantity = qty
         else:
             m_word = re.match(r"^([^\s]+)\s*(.*)$", remainder)
@@ -199,8 +261,7 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
 
                 if unit_key is not None:
                     unit = UNIT_ALIASES[unit_key]
-                    name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
-                    name = name_part.split(",")[0].strip()
+                    name = _clean_ingredient_name(after_token)
                     quantity = qty
                 else:
                     # Unrecognized unit word.
@@ -208,14 +269,12 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
                     if re.match(r"^of\s+", after_token, re.IGNORECASE):
                         quantity = None
                         unit = ""
-                        name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
-                        name = name_part.split(",")[0].strip()
+                        name = _clean_ingredient_name(after_token)
                     else:
                         # e.g. "4 eggs" or "2 medium onions, diced"
                         quantity = qty
                         unit = ""
-                        name_part = remainder
-                        name = name_part.split(",")[0].strip()
+                        name = _clean_ingredient_name(remainder)
             else:
                 quantity = qty
                 unit = ""
@@ -224,10 +283,9 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
         # No leading number
         quantity = None
         unit = ""
-        name_part = re.sub(r"^of\s+", "", remainder, flags=re.IGNORECASE)
-        name = name_part.split(",")[0].strip()
+        name = _clean_ingredient_name(remainder)
 
-    staple = name.lower() in STAPLE_NAMES
+    staple = _is_staple_name(name)
     return {
         "raw": raw,
         "name": name,
@@ -264,6 +322,9 @@ def parse_iso_duration(value: str | None) -> str | None:
         hours = int(m.group("hours")) if m.group("hours") else 0
         minutes = int(m.group("minutes")) if m.group("minutes") else 0
         seconds = int(m.group("seconds")) if m.group("seconds") else 0
+
+        if days == 0 and hours == 0 and minutes >= 60:
+            hours, minutes = divmod(minutes, 60)
 
         parts = []
         if days:
@@ -886,8 +947,7 @@ def extract_with_llm(
                 ingredients.append(parse_ingredient_line(s))
         elif isinstance(ing, dict):
             raw_val = str(ing.get("raw") or "").strip()
-            name_val = str(ing.get("name") or "").strip()
-            name_val = re.sub(r"^of\s+", "", name_val, flags=re.IGNORECASE).split(",")[0].strip()
+            name_val = _clean_ingredient_name(str(ing.get("name") or "").strip())
             if not name_val:
                 ingredients.append(parse_ingredient_line(raw_val))
             else:
@@ -897,7 +957,7 @@ def extract_with_llm(
                 elif unit_val.rstrip(".,") in UNIT_ALIASES:
                     unit_val = UNIT_ALIASES[unit_val.rstrip(".,")]
 
-                is_staple = bool(ing.get("staple", False)) or (name_val.lower() in STAPLE_NAMES)
+                is_staple = bool(ing.get("staple", False)) or _is_staple_name(name_val)
 
                 qty_val = ing.get("quantity")
                 if qty_val is not None:
@@ -1018,7 +1078,7 @@ def ingest_recipe(
                 with httpx.Client(
                     follow_redirects=True,
                     timeout=15.0,
-                    headers={"User-Agent": "OpenFresh/1.0 (Recipe Ingest)"},
+                    headers=_DEFAULT_HTTP_HEADERS,
                 ) as client:
                     resp = client.get(clean_url)
             if resp.status_code >= 400:

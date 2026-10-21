@@ -219,3 +219,15 @@ def test_chooser_hook_overrides_round_robin(tmp_path):
     assert {c["id"] for c in candidates} == {fixed - 1, fixed, fixed + 1}
     assert context["week_start"] == WEEK_START
     assert context["date"] == MON
+
+
+def test_auto_populate_skips_needs_review_recipes(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    good = _recipe(conn, "Reviewed Pasta", "pasta")
+    recipes.create_recipe(conn, "Unreviewed Stub", needs_review=True)
+
+    planner.auto_populate(conn, WEEK_START)
+
+    ids = [r["recipe_id"] for r in _planned_rows(conn)]
+    assert ids == [good] * 5
+

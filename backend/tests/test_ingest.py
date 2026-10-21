@@ -1206,6 +1206,44 @@ def test_parse_iso_duration_edge_cases():
     assert parse_iso_duration("PT0H0M") == "0m"
     assert parse_iso_duration("PT0M") == "0m"
     assert parse_iso_duration("PT0S") == "0m"
+    assert parse_iso_duration("PT745M") == "12h 25m"
+    assert parse_iso_duration("PT90M") == "1h 30m"
+
+
+def test_parse_ingredient_line_real_world_parentheticals_and_dual_units():
+    # SeriousEats style parenthetical gram weight after unit
+    r1 = parse_ingredient_line("1 pound (450g) dried dark red kidney beans")
+    assert r1["quantity"] == 1.0
+    assert r1["unit"] == "lb"
+    assert r1["name"] == "dried dark red kidney beans"
+    assert r1["staple"] is False
+
+    # SeriousEats style oil with parenthetical ml
+    r2 = parse_ingredient_line("2 tablespoons (30ml) vegetable oil")
+    assert r2["quantity"] == 2.0
+    assert r2["unit"] == "tbsp"
+    assert r2["name"] == "vegetable oil"
+    assert r2["staple"] is True
+
+    # RecipeTinEats / WPRM dual metric/imperial and nested parenthetical notes
+    r3 = parse_ingredient_line(
+        "1 kg / 2 lb chicken thigh fillets (, skinless and boneless (Note 3))"
+    )
+    assert r3["quantity"] == 1.0
+    assert r3["unit"] == "kg"
+    assert r3["name"] == "chicken thigh fillets"
+    assert r3["staple"] is False
+
+    # Can size in parentheses between quantity and unit
+    r4 = parse_ingredient_line("1 (14 oz) can diced tomatoes")
+    assert r4["quantity"] == 1.0
+    assert r4["unit"] == "can"
+    assert r4["name"] == "diced tomatoes"
+
+    # Freshly ground black pepper recognized as staple
+    r5 = parse_ingredient_line("Freshly ground black pepper")
+    assert r5["staple"] is True
+
 
 
 

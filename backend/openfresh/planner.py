@@ -294,7 +294,7 @@ def auto_populate(
         else 0.0
     )
 
-    all_recipes = recipes.list_recipes(conn)
+    all_recipes = recipes.list_recipes(conn, needs_review=False)
     created: list[int] = []
     for day in preferred:
         if slots <= 0:
