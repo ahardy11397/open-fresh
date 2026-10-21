@@ -45,14 +45,14 @@
   - `recipes.update_recipe(conn, recipe_id: int, *, title: str | None = None, servings: int | None = None, steps: list[str] | None = None, total_time: str | None = ..., needs_review: bool | None = None, review_notes: str | None = ..., ingredients: list[dict] | None = None) -> dict | None` — updates specified fields in place; when `ingredients` is provided, deletes existing `recipe_ingredients` for `recipe_id` and inserts the new list; returns `get_recipe(conn, recipe_id)`.
   - `recipes.list_recipes(conn, needs_review: bool | None = None) -> list[dict]` — returns recipes with `steps` decoded as `list[str]`, `total_time`, `needs_review` as `bool`, and `review_notes`; filters by `needs_review` when not `None`.
 
-- [ ] **Step 1: Write failing tests in `backend/tests/test_recipes.py`**
+- [x] **Step 1: Write failing tests in `backend/tests/test_recipes.py`**
   - `test_create_recipe_with_steps_time_and_review`: creates a recipe with `steps=["Boil water", "Simmer"]`, `total_time="25m"`, `needs_review=True`, `review_notes="check quantities"`, asserts `get_recipe` and `list_recipes(conn, needs_review=True)` return those exact values and `list_recipes(conn, needs_review=False)` returns `[]`.
   - `test_add_ingredient_uses_cleaned_item_name`: calls `recipes.add_ingredient(conn, rid, "2 cloves garlic, minced", 2.0, "clove", item_name="garlic")` and asserts `ing["raw"] == "2 cloves garlic, minced"` while `ing["item_name"] == "garlic"`.
   - `test_update_recipe_replaces_fields_and_ingredients`: calls `recipes.update_recipe(conn, rid, title="Fixed Title", needs_review=False, review_notes=None, steps=["Step 1"], ingredients=[{"raw": "1 cup rice", "name": "rice", "quantity": 1.0, "unit": "cup", "staple": False}])` and asserts the updated recipe reflects the new values and replaced ingredients.
-- [ ] **Step 2: Run `pytest backend/tests/test_recipes.py -v` — verify FAIL**
-- [ ] **Step 3: Implement schema and cookbook updates in `backend/openfresh/db.py` and `backend/openfresh/recipes.py`**
-- [ ] **Step 4: Run `pytest backend/tests/test_recipes.py -v` — verify PASS**
-- [ ] **Step 5: Commit** — `git add backend/openfresh/db.py backend/openfresh/recipes.py backend/tests/test_recipes.py && git commit -m "feat: add steps, total_time, review_notes, and update_recipe to cookbook"`
+- [x] **Step 2: Run `pytest backend/tests/test_recipes.py -v` — verify FAIL**
+- [x] **Step 3: Implement schema and cookbook updates in `backend/openfresh/db.py` and `backend/openfresh/recipes.py`**
+- [x] **Step 4: Run `pytest backend/tests/test_recipes.py -v` — verify PASS**
+- [x] **Step 5: Commit** — `git add backend/openfresh/db.py backend/openfresh/recipes.py backend/tests/test_recipes.py && git commit -m "feat: add steps, total_time, review_notes, and update_recipe to cookbook"`
 
 ---
 
@@ -67,17 +67,17 @@
   - `ingest.parse_ingredient_line(raw: str) -> dict` — returns `{"raw": str, "name": str, "quantity": float | None, "unit": str, "staple": bool}`. Parses leading integers, decimals, ASCII fractions (`1/2`), mixed fractions (`1 1/2`), and Unicode fractions (`½`, `¼`, `¾`, `⅓`, `⅔`, `⅛`, `⅜`, `⅝`, `⅞`); maps unit aliases (`cups`->`cup`, `tablespoons`/`tbsp.`->`tbsp`, `teaspoons`/`tsp.`->`tsp`, `ounces`->`oz`, `pounds`/`lbs`->`lb`, `grams`->`g`, `kilograms`->`kg`, `cloves`->`clove`, `cans`->`can`, `bunches`->`bunch`); strips leading `"of "` and trailing comma prep notes (`", finely chopped"`) from `name`; sets `staple=True` when `name` is in `{"salt", "kosher salt", "sea salt", "pepper", "black pepper", "water", "olive oil", "vegetable oil", "cooking oil"}`.
   - `ingest.parse_iso_duration(value: str | None) -> str | None` — converts ISO-8601 durations like `"PT45M"` -> `"45m"`, `"PT1H30M"` -> `"1h 30m"`, `"PT2H"` -> `"2h"`, or passes through non-ISO human strings like `"30 mins"`.
 
-- [ ] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
+- [x] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
   - `test_parse_ingredient_line_fractions_and_prep_notes`:
     - `parse_ingredient_line("1 ½ cups whole milk")` -> `{"raw": "1 ½ cups whole milk", "name": "whole milk", "quantity": 1.5, "unit": "cup", "staple": False}`
     - `parse_ingredient_line("2 cloves garlic, finely minced")` -> `{"raw": "2 cloves garlic, finely minced", "name": "garlic", "quantity": 2.0, "unit": "clove", "staple": False}`
     - `parse_ingredient_line("1/2 tsp kosher salt")` -> `{"raw": "1/2 tsp kosher salt", "name": "kosher salt", "quantity": 0.5, "unit": "tsp", "staple": True}`
     - `parse_ingredient_line("1 glug of olive oil")` -> `{"raw": "1 glug of olive oil", "name": "olive oil", "quantity": None, "unit": "", "staple": True}`
   - `test_parse_iso_duration`: asserts `"PT45M"` -> `"45m"`, `"PT1H15M"` -> `"1h 15m"`, `"PT2H"` -> `"2h"`, `None` -> `None`.
-- [ ] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
-- [ ] **Step 3: Implement `parse_ingredient_line` and `parse_iso_duration` in `backend/openfresh/ingest.py`**
-- [ ] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
-- [ ] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py && git commit -m "feat: deterministic ingredient line parser and ISO duration formatter"`
+- [x] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
+- [x] **Step 3: Implement `parse_ingredient_line` and `parse_iso_duration` in `backend/openfresh/ingest.py`**
+- [x] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
+- [x] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py && git commit -m "feat: deterministic ingredient line parser and ISO duration formatter"`
 
 ---
 
@@ -93,14 +93,14 @@
   - `ingest.extract_schema_org_recipe(html: str) -> dict | None` — scans `<script type="application/ld+json">` tags, traverses top-level dicts, lists, and `@graph` arrays for `@type` matching `"Recipe"` (string or list containing `"Recipe"`). Returns `{"title": str, "servings": int, "total_time": str | None, "ingredients": list[dict], "steps": list[str], "needs_review": bool, "review_notes": str | None}` when found, or `None` if no Recipe JSON-LD node exists.
   - `ingest.extract_html_text_and_title(html: str) -> tuple[str, str | None]` — strips `<script>` and `<style>` blocks and HTML tags to clean plain text, and returns `(clean_text, page_title)`.
 
-- [ ] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
+- [x] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
   - `test_extract_schema_org_recipe_complete`: HTML containing a `@graph` with a `Recipe` node (`name="Chili"`, `recipeYield="4 servings"`, `totalTime="PT1H15M"`, `recipeIngredient=["500 g ground beef", "1 tsp salt"]`, `recipeInstructions=[{"@type": "HowToStep", "text": "Brown beef."}, {"@type": "HowToStep", "text": "Simmer."}]`) returns `servings=4`, `total_time="1h 15m"`, 2 parsed ingredients (with salt marked `staple=True`), 2 steps, `needs_review=False`.
   - `test_malformed_and_non_recipe_jsonld_falls_back`: HTML with one broken JSON script tag and one `@type: "WebSite"` script tag returns `None` without raising.
   - `test_extract_html_text_and_title`: strips `<script>`/`<style>` and extracts `<title>`.
-- [ ] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
-- [ ] **Step 3: Implement `extract_schema_org_recipe` and `extract_html_text_and_title` in `backend/openfresh/ingest.py`**
-- [ ] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
-- [ ] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py && git commit -m "feat: schema.org/Recipe JSON-LD extractor and HTML text cleaner"`
+- [x] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
+- [x] **Step 3: Implement `extract_schema_org_recipe` and `extract_html_text_and_title` in `backend/openfresh/ingest.py`**
+- [x] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
+- [x] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py && git commit -m "feat: schema.org/Recipe JSON-LD extractor and HTML text cleaner"`
 
 ---
 
@@ -120,16 +120,16 @@
   - `ingest.ingest_recipe(conn: sqlite3.Connection, *, url: str | None = None, raw_text: str | None = None, title: str | None = None, http_client: httpx.Client | None = None, llm_client: httpx.Client | None = None, ytdlp_runner=None) -> dict` — orchestrates video/webpage/raw_text extraction, persists the recipe and ingredients in SQLite, and returns `recipes.get_recipe(conn, recipe_id)`.
   - `ingest.reingest_recipe(conn: sqlite3.Connection, recipe_id: int, raw_text: str, *, llm_client: httpx.Client | None = None) -> dict | None` — extracts from `raw_text` and updates `recipe_id` via `recipes.update_recipe`.
 
-- [ ] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
+- [x] **Step 1: Write failing tests in `backend/tests/test_ingest.py`**
   - `test_extract_with_llm_strips_fences_and_handles_partial`: fake `llm_client` returning ```` ```json\n{"title": "Garlic Pasta", "servings": 3, "total_time": "20m", "ingredients": [{"raw": "200 g pasta", "name": "pasta", "quantity": 200, "unit": "g", "staple": false}], "steps": ["Boil pasta."], "low_confidence": false}\n``` ```` parses cleanly with `needs_review=False`.
   - `test_webpage_ingest_uses_jsonld_without_calling_llm`: fake `http_client` serves HTML with `schema.org/Recipe`; `llm_client` raises `AssertionError("should not be called")`; `ingest_recipe` stores the recipe with `needs_review=False`.
   - `test_webpage_ingest_falls_back_to_llm_when_no_jsonld`: fake `http_client` serves plain HTML without JSON-LD; fake `llm_client` returns structured JSON; `ingest_recipe` stores the LLM-extracted recipe.
   - `test_video_url_ingest_extracts_transcript_and_calls_llm`: URL `https://www.youtube.com/watch?v=abc` routes to `ytdlp_runner`, combines title/description/subtitles, calls `llm_client`, and stores the complete recipe with `needs_review=False`.
   - `test_never_fail_when_video_and_llm_both_fail`: `ytdlp_runner` raises `RuntimeError("Instagram login required")`; `ingest_recipe` still creates a recipe in SQLite with `needs_review=True`, `source_url` preserved, and `review_notes` mentioning the transcript failure.
-- [ ] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
-- [ ] **Step 3: Implement `is_video_url`, `extract_video_text`, `extract_with_llm`, `ingest_recipe`, and `reingest_recipe` in `backend/openfresh/ingest.py`**
-- [ ] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
-- [ ] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py backend/pyproject.toml && git commit -m "feat: video transcript, LLM fallback, and never-fail ingest orchestrator"`
+- [x] **Step 2: Run `pytest backend/tests/test_ingest.py -v` — verify FAIL**
+- [x] **Step 3: Implement `is_video_url`, `extract_video_text`, `extract_with_llm`, `ingest_recipe`, and `reingest_recipe` in `backend/openfresh/ingest.py`**
+- [x] **Step 4: Run `pytest backend/tests/test_ingest.py -v` — verify PASS**
+- [x] **Step 5: Commit** — `git add backend/openfresh/ingest.py backend/tests/test_ingest.py backend/pyproject.toml && git commit -m "feat: video transcript, LLM fallback, and never-fail ingest orchestrator"`
 
 ---
 
@@ -152,12 +152,12 @@
   - CLI: `openfresh add-recipe <url> [--text <raw_text>]` posts to `/recipes/ingest`; `openfresh review-queue` gets `/recipes?needs_review=true`.
   - `docker-compose.yml`: internal `llm` service (`ollama/ollama:latest`, `./data/ollama:/root/.ollama`, no `ports:` published) and `OPENFRESH_LLM_URL: http://llm:11434/v1`, `OPENFRESH_LLM_MODEL: gemma3n:e4b` on `openfresh`.
 
-- [ ] **Step 1: Write failing tests in `backend/tests/test_api.py` and `backend/tests/test_cli.py`**
+- [x] **Step 1: Write failing tests in `backend/tests/test_api.py` and `backend/tests/test_cli.py`**
   - `test_ingest_empty_body_returns_422` (`test_api.py`): `POST /recipes/ingest` with `{}` or `{"url": "   "}` returns `422`.
   - `test_ingest_and_review_queue_flow` (`test_api.py`): `POST /recipes/ingest` with `raw_text` when LLM is offline lands in `GET /recipes?needs_review=true` with `needs_review=True`; `PATCH /recipes/{id}` with cleaned `steps`, `ingredients`, and `needs_review=False` clears it from `GET /recipes?needs_review=true`.
   - `test_reingest_and_patch_planned_recipe_preserves_plan_fk` (`test_api.py`): plan a stub recipe on `MONDAY`, then call `POST /recipes/{id}/reingest` and `PATCH /recipes/{id}` with new ingredients; verify `200` and that `/list` reflects the updated ingredients.
   - Update `test_add_recipe` and add `test_add_recipe_with_text` + `test_review_queue` in `backend/tests/test_cli.py`.
-- [ ] **Step 2: Run `pytest backend/tests/test_api.py backend/tests/test_cli.py -v` — verify FAIL**
-- [ ] **Step 3: Implement routes in `api.py`, commands in `cli.py`, sidecar in `docker-compose.yml`, and docs in `README.md`**
-- [ ] **Step 4: Run full test suite `pytest -v` — verify all PASS**
-- [ ] **Step 5: Commit** — `git add backend/openfresh/api.py backend/openfresh/cli.py backend/tests/test_api.py backend/tests/test_cli.py docker-compose.yml README.md && git commit -m "feat: ingest API endpoints, CLI commands, and internal Compose LLM sidecar"`
+- [x] **Step 2: Run `pytest backend/tests/test_api.py backend/tests/test_cli.py -v` — verify FAIL**
+- [x] **Step 3: Implement routes in `api.py`, commands in `cli.py`, sidecar in `docker-compose.yml`, and docs in `README.md`**
+- [x] **Step 4: Run full test suite `pytest -v` — verify all PASS**
+- [x] **Step 5: Commit** — `git add backend/openfresh/api.py backend/openfresh/cli.py backend/tests/test_api.py backend/tests/test_cli.py docker-compose.yml README.md && git commit -m "feat: ingest API endpoints, CLI commands, and internal Compose LLM sidecar"`
