@@ -7,6 +7,7 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "httpx",
+    "yt-dlp",
 ]
 
 [project.scripts]

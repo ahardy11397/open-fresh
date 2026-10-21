@@ -2,9 +2,16 @@
 
 import html
 import json
+import os
 import re
+import sqlite3
 import unicodedata
+import urllib.parse
 from typing import Any
+
+import httpx
+
+from openfresh import recipes
 
 STAPLE_NAMES = {
     "salt",
@@ -463,4 +470,510 @@ def extract_html_text_and_title(html_content: str) -> tuple[str, str | None]:
     clean_text = " ".join(text.split())
 
     return (clean_text, page_title)
+
+
+def is_video_url(url: str) -> bool:
+    """Return True if the URL matches known video/social platforms."""
+    if not url:
+        return False
+    u = url.strip()
+    if "://" not in u:
+        u = "https://" + u
+    parsed = urllib.parse.urlparse(u)
+    netloc = (parsed.netloc or "").lower()
+    path = (parsed.path or "").lower()
+
+    if ":" in netloc:
+        netloc = netloc.split(":")[0]
+
+    video_domains = (
+        "youtube.com",
+        "youtu.be",
+        "tiktok.com",
+        "instagram.com",
+        "vimeo.com",
+        "twitch.tv",
+        "fb.watch",
+    )
+    for domain in video_domains:
+        if netloc == domain or netloc.endswith("." + domain):
+            return True
+
+    if netloc == "facebook.com" or netloc.endswith(".facebook.com"):
+        if "/reel" in path:
+            return True
+
+    return False
+
+
+def _clean_subtitle_text(text: str) -> str:
+    """Strip VTT/SRT headers, cues, timestamps, and duplicate lines from subtitles."""
+    lines: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("WEBVTT") or s.startswith("NOTE"):
+            continue
+        if re.match(r"^\d+$", s):
+            continue
+        if "-->" in s:
+            continue
+        s = re.sub(r"<[^>]+>", "", s).strip()
+        if s and (not lines or lines[-1] != s):
+            lines.append(s)
+    return "\n".join(lines)
+
+
+def _extract_subtitle_text(sub_data: Any) -> str:
+    """Extract and clean text from various subtitle formats (string, dict, list)."""
+    if not sub_data:
+        return ""
+    if isinstance(sub_data, str):
+        return _clean_subtitle_text(sub_data)
+    if isinstance(sub_data, list):
+        chunks: list[str] = []
+        for item in sub_data:
+            if isinstance(item, str):
+                chunks.append(item)
+            elif isinstance(item, dict):
+                text = item.get("data") or item.get("text") or ""
+                if text:
+                    chunks.append(str(text))
+        return _clean_subtitle_text("\n".join(chunks))
+    if isinstance(sub_data, dict):
+        langs = ["en", "en-US", "en-GB"] + [
+            k for k in sub_data.keys() if k not in ("en", "en-US", "en-GB")
+        ]
+        for lang in langs:
+            if lang in sub_data:
+                c = _extract_subtitle_text(sub_data[lang])
+                if c:
+                    return c
+    return ""
+
+
+def extract_video_text(
+    url: str,
+    ytdlp_runner: Any = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Extract transcript, title, and description from a video URL via yt-dlp.
+
+    Returns:
+        (combined_text, video_title, error_note)
+    """
+    if ytdlp_runner is not None:
+        try:
+            info = ytdlp_runner(url)
+        except Exception as exc:
+            return (None, None, f"Video transcript unavailable: {exc}")
+    else:
+        try:
+            import yt_dlp
+        except ImportError as e:
+            return (None, None, f"Video transcript unavailable: {e}")
+        try:
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "quiet": True,
+                "no_warnings": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as exc:
+            return (None, None, f"Video transcript unavailable: {exc}")
+
+    if not isinstance(info, dict):
+        return (None, None, "Video transcript unavailable: empty metadata/transcript")
+
+    video_title = str(info["title"]).strip() if info.get("title") else None
+    description = str(info["description"]).strip() if info.get("description") else ""
+
+    sub_parts: list[str] = []
+    if info.get("transcript"):
+        t = _extract_subtitle_text(info["transcript"])
+        if t:
+            sub_parts.append(t)
+    if info.get("requested_subtitles"):
+        t = _extract_subtitle_text(info["requested_subtitles"])
+        if t:
+            sub_parts.append(t)
+    if info.get("subtitles"):
+        t = _extract_subtitle_text(info["subtitles"])
+        if t:
+            sub_parts.append(t)
+    if info.get("automatic_captions"):
+        t = _extract_subtitle_text(info["automatic_captions"])
+        if t:
+            sub_parts.append(t)
+
+    parts: list[str] = []
+    if video_title:
+        parts.append(video_title)
+    if description:
+        parts.append(description)
+    if sub_parts:
+        parts.append("\n\n".join(sub_parts))
+
+    combined = "\n\n".join(parts).strip()
+    if not combined:
+        return (None, video_title, "Video transcript unavailable: empty metadata/transcript")
+
+    return (combined, video_title, None)
+
+
+LLM_SYSTEM_PROMPT = (
+    "You are a recipe extraction assistant. Extract structured recipe information "
+    "from the provided text. Return ONLY a valid JSON object with the following fields:\n"
+    "- title: string (recipe name)\n"
+    "- servings: integer (default 2)\n"
+    "- total_time: string or null (e.g. '45m', '1h 15m')\n"
+    "- ingredients: list of objects with {raw: string, name: string, quantity: float or null, unit: string, staple: boolean}\n"
+    "- steps: list of string instruction steps in order\n"
+    "- low_confidence: boolean (true if the text did not contain a clear recipe or ingredients/steps were incomplete)\n"
+    "- review_notes: string or null (explanation if confidence is low or info is missing)\n"
+)
+
+
+def extract_with_llm(
+    text: str,
+    fallback_title: str = "Untitled Recipe",
+    llm_client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    """Call local LLM endpoint to extract structured recipe data from raw text."""
+    base_url = os.environ.get("OPENFRESH_LLM_URL", "http://llm:11434/v1").rstrip("/")
+    model = os.environ.get("OPENFRESH_LLM_MODEL", "gemma3n:e4b")
+    api_key = os.environ.get("OPENFRESH_LLM_API_KEY", "ollama")
+
+    payload = {
+        "model": model,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": LLM_SYSTEM_PROMPT},
+            {"role": "user", "content": text[:24000]},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        if llm_client is not None:
+            resp = llm_client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
+        else:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
+
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        data = resp.json()
+        raw_content = str(data["choices"][0]["message"]["content"]).strip()
+        if raw_content.startswith("```"):
+            raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+            raw_content = re.sub(r"\s*```$", "", raw_content)
+        parsed_json = json.loads(raw_content)
+        if not isinstance(parsed_json, dict):
+            raise ValueError("LLM returned non-dictionary JSON")
+    except Exception as exc:
+        return {
+            "title": fallback_title,
+            "servings": 2,
+            "total_time": None,
+            "ingredients": [],
+            "steps": [],
+            "needs_review": True,
+            "review_notes": f"LLM extraction failed: {exc}",
+        }
+
+    # Normalize title
+    title_val = parsed_json.get("title")
+    if isinstance(title_val, str) and title_val.strip():
+        extracted_title = title_val.strip()
+    else:
+        extracted_title = fallback_title
+
+    # Normalize servings
+    servings = _parse_servings(parsed_json.get("servings"))
+
+    # Normalize total_time
+    raw_time = parsed_json.get("total_time")
+    if isinstance(raw_time, str) and raw_time.strip():
+        total_time = parse_iso_duration(raw_time.strip())
+    else:
+        total_time = None
+
+    # Normalize steps
+    steps: list[str] = []
+    raw_steps = parsed_json.get("steps") or []
+    if isinstance(raw_steps, str):
+        steps = _split_and_clean_steps(raw_steps)
+    elif isinstance(raw_steps, list):
+        for s in raw_steps:
+            if isinstance(s, str):
+                cleaned = " ".join(s.split())
+                if cleaned:
+                    steps.append(cleaned)
+            elif isinstance(s, dict):
+                t = s.get("text") or s.get("name")
+                if t:
+                    cleaned = " ".join(str(t).split())
+                    if cleaned:
+                        steps.append(cleaned)
+
+    # Normalize ingredients
+    ingredients: list[dict[str, Any]] = []
+    raw_ingredients = parsed_json.get("ingredients") or []
+    if isinstance(raw_ingredients, str):
+        raw_ingredients = [raw_ingredients]
+    elif not isinstance(raw_ingredients, list):
+        raw_ingredients = []
+
+    for ing in raw_ingredients:
+        if isinstance(ing, str):
+            s = ing.strip()
+            if s:
+                ingredients.append(parse_ingredient_line(s))
+        elif isinstance(ing, dict):
+            raw_val = str(ing.get("raw") or "").strip()
+            name_val = str(ing.get("name") or "").strip()
+            if not name_val:
+                ingredients.append(parse_ingredient_line(raw_val))
+            else:
+                unit_val = str(ing.get("unit") or "").strip().lower()
+                if unit_val in UNIT_ALIASES:
+                    unit_val = UNIT_ALIASES[unit_val]
+                elif unit_val.rstrip(".,") in UNIT_ALIASES:
+                    unit_val = UNIT_ALIASES[unit_val.rstrip(".,")]
+
+                is_staple = bool(ing.get("staple", False)) or (name_val.lower() in STAPLE_NAMES)
+
+                qty_val = ing.get("quantity")
+                if qty_val is not None:
+                    try:
+                        qty_val = float(qty_val)
+                    except (ValueError, TypeError):
+                        qty_val = None
+
+                if not raw_val:
+                    parts = []
+                    if qty_val is not None:
+                        parts.append(str(int(qty_val)) if qty_val == int(qty_val) else str(qty_val))
+                    if unit_val:
+                        parts.append(unit_val)
+                    parts.append(name_val)
+                    raw_val = " ".join(parts)
+
+                ingredients.append({
+                    "raw": raw_val,
+                    "name": name_val,
+                    "quantity": qty_val,
+                    "unit": unit_val,
+                    "staple": is_staple,
+                })
+
+    # Evaluate review flags
+    notes: list[str] = []
+    if parsed_json.get("low_confidence"):
+        note = parsed_json.get("review_notes") or parsed_json.get("notes")
+        notes.append(str(note) if note else "LLM reported low confidence")
+    elif parsed_json.get("review_notes"):
+        notes.append(str(parsed_json["review_notes"]))
+
+    if not ingredients:
+        notes.append("Missing ingredients")
+    if not steps:
+        notes.append("Missing instructions")
+    if ingredients and any(
+        (not ing.get("name")) or (not ing.get("staple") and ing.get("quantity") is None)
+        for ing in ingredients
+    ):
+        notes.append("One or more non-staple ingredients missing quantity")
+
+    if notes:
+        needs_review = True
+        review_notes = "; ".join(notes)
+    else:
+        needs_review = False
+        review_notes = None
+
+    return {
+        "title": extracted_title,
+        "servings": servings,
+        "total_time": total_time,
+        "ingredients": ingredients,
+        "steps": steps,
+        "needs_review": needs_review,
+        "review_notes": review_notes,
+    }
+
+
+def ingest_recipe(
+    conn: sqlite3.Connection,
+    *,
+    url: str | None = None,
+    raw_text: str | None = None,
+    title: str | None = None,
+    http_client: httpx.Client | None = None,
+    llm_client: httpx.Client | None = None,
+    ytdlp_runner: Any = None,
+) -> dict[str, Any]:
+    """Orchestrate recipe ingestion from URL or raw text with never-fail guarantee."""
+    clean_url = url.strip() if url and url.strip() else None
+    clean_text = raw_text.strip() if raw_text and raw_text.strip() else None
+
+    extracted: dict[str, Any]
+
+    if clean_url and is_video_url(clean_url):
+        if clean_text:
+            extracted = extract_with_llm(
+                clean_text,
+                fallback_title=title or clean_url,
+                llm_client=llm_client,
+            )
+        else:
+            video_text, video_title, error_note = extract_video_text(
+                clean_url, ytdlp_runner=ytdlp_runner
+            )
+            if video_text is not None:
+                extracted = extract_with_llm(
+                    video_text,
+                    fallback_title=title or video_title or clean_url,
+                    llm_client=llm_client,
+                )
+            else:
+                extracted = {
+                    "title": title or video_title or clean_url,
+                    "servings": 2,
+                    "total_time": None,
+                    "ingredients": [],
+                    "steps": [],
+                    "needs_review": True,
+                    "review_notes": error_note or "Video transcript unavailable",
+                }
+    elif clean_url:
+        html_content: str | None = None
+        fetch_error: str | None = None
+        try:
+            if http_client is not None:
+                resp = http_client.get(clean_url)
+            else:
+                with httpx.Client(
+                    follow_redirects=True,
+                    timeout=15.0,
+                    headers={"User-Agent": "OpenFresh/1.0 (Recipe Ingest)"},
+                ) as client:
+                    resp = client.get(clean_url)
+            if resp.status_code >= 400:
+                fetch_error = f"HTTP {resp.status_code}"
+            else:
+                html_content = resp.text
+        except Exception as exc:
+            fetch_error = str(exc)
+
+        if html_content is not None:
+            schema_recipe = extract_schema_org_recipe(html_content)
+            if schema_recipe is not None:
+                extracted = schema_recipe
+            else:
+                page_text, page_title = extract_html_text_and_title(html_content)
+                extracted = extract_with_llm(
+                    page_text,
+                    fallback_title=title or page_title or clean_url,
+                    llm_client=llm_client,
+                )
+        else:
+            if clean_text:
+                extracted = extract_with_llm(
+                    clean_text,
+                    fallback_title=title or clean_url,
+                    llm_client=llm_client,
+                )
+            else:
+                extracted = {
+                    "title": title or clean_url,
+                    "servings": 2,
+                    "total_time": None,
+                    "ingredients": [],
+                    "steps": [],
+                    "needs_review": True,
+                    "review_notes": f"Webpage fetch failed: {fetch_error}",
+                }
+    elif clean_text:
+        extracted = extract_with_llm(
+            clean_text,
+            fallback_title=title or "Untitled Recipe",
+            llm_client=llm_client,
+        )
+    else:
+        extracted = {
+            "title": title or "Untitled Recipe",
+            "servings": 2,
+            "total_time": None,
+            "ingredients": [],
+            "steps": [],
+            "needs_review": True,
+            "review_notes": "No URL or recipe text provided",
+        }
+
+    final_title = title.strip() if (title and title.strip()) else (extracted.get("title") or "Untitled Recipe")
+
+    recipe_id = recipes.create_recipe(
+        conn,
+        title=final_title,
+        servings=extracted.get("servings", 2),
+        source_url=clean_url,
+        steps=extracted.get("steps", []),
+        total_time=extracted.get("total_time"),
+        needs_review=extracted.get("needs_review", False),
+        review_notes=extracted.get("review_notes"),
+    )
+
+    for ing in extracted.get("ingredients", []):
+        recipes.add_ingredient(
+            conn,
+            recipe_id,
+            raw=ing.get("raw") or ing.get("name") or "",
+            quantity=ing.get("quantity"),
+            unit=ing.get("unit", ""),
+            staple=bool(ing.get("staple", False)),
+            item_name=ing.get("name"),
+        )
+
+    saved = recipes.get_recipe(conn, recipe_id)
+    assert saved is not None
+    return saved
+
+
+def reingest_recipe(
+    conn: sqlite3.Connection,
+    recipe_id: int,
+    raw_text: str,
+    *,
+    llm_client: httpx.Client | None = None,
+) -> dict[str, Any] | None:
+    """Re-extract an existing recipe from user-pasted text and update it."""
+    existing = recipes.get_recipe(conn, recipe_id)
+    if existing is None:
+        return None
+
+    extracted = extract_with_llm(
+        raw_text,
+        fallback_title=existing["title"],
+        llm_client=llm_client,
+    )
+
+    return recipes.update_recipe(
+        conn,
+        recipe_id,
+        title=extracted["title"],
+        servings=extracted["servings"],
+        steps=extracted["steps"],
+        total_time=extracted["total_time"],
+        needs_review=extracted["needs_review"],
+        review_notes=extracted["review_notes"],
+        ingredients=extracted["ingredients"],
+    )
+
 
