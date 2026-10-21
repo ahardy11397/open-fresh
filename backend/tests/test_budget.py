@@ -9,6 +9,12 @@ MID_WEEK = "2026-10-22"
 NEXT_WEEK = "2026-10-26"  # exactly week_start + 7 -> outside the window
 
 
+@pytest.fixture(autouse=True)
+def _no_network_openprices(monkeypatch):
+    """Avoid real network calls to Open Prices during unit tests."""
+    monkeypatch.setattr(pricing, "make_lookup", lambda: (lambda _name: None))
+
+
 def _fresh_conn(tmp_path):
     conn = db.get_conn(str(tmp_path / "kitchen.db"))
     db.init_db(conn)

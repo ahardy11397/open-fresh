@@ -14,16 +14,43 @@ def _normalize(raw: str) -> str:
     return " ".join(raw.split()).lower()
 
 
-def get_or_create(conn: sqlite3.Connection, name: str) -> int:
+def get_or_create(
+    conn: sqlite3.Connection, name: str, category: str | None = None
+) -> int:
     """Return the item id for a canonical name, creating it if needed."""
     canonical = _normalize(name)
-    row = conn.execute("SELECT id FROM items WHERE name = ?", (canonical,)).fetchone()
+    norm_cat = _normalize(category) if category is not None else None
+    row = conn.execute(
+        "SELECT id, category FROM items WHERE name = ?", (canonical,)
+    ).fetchone()
     if row is not None:
+        if norm_cat is not None and row["category"] != norm_cat:
+            conn.execute(
+                "UPDATE items SET category = ? WHERE id = ?",
+                (norm_cat, row["id"]),
+            )
+            conn.commit()
         return row["id"]
-    cur = conn.execute("INSERT INTO items (name) VALUES (?)", (canonical,))
+    cur = conn.execute(
+        "INSERT INTO items (name, category) VALUES (?, ?)",
+        (canonical, norm_cat),
+    )
     conn.commit()
     assert cur.lastrowid is not None
     return cur.lastrowid
+
+
+def set_category(
+    conn: sqlite3.Connection, item_id: int, category: str | None
+) -> None:
+    """Update the category of an existing item."""
+    norm_cat = _normalize(category) if category is not None else None
+    cur = conn.execute(
+        "UPDATE items SET category = ? WHERE id = ?", (norm_cat, item_id)
+    )
+    if cur.rowcount == 0:
+        raise ValueError(f"no item with id {item_id}")
+    conn.commit()
 
 
 def get_or_create_with_alias(conn: sqlite3.Connection, raw: str) -> int:
@@ -69,5 +96,7 @@ def list_items(conn: sqlite3.Connection) -> list[dict]:
     """Return all canonical items as dicts, ordered by name."""
     return [
         dict(row)
-        for row in conn.execute("SELECT id, name, created_at FROM items ORDER BY name")
+        for row in conn.execute(
+            "SELECT id, name, category, created_at FROM items ORDER BY name"
+        )
     ]

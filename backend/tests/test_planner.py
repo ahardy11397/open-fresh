@@ -128,6 +128,21 @@ def test_mark_cooked_consumes_scaled_ingredients(tmp_path):
     assert row["cooked"] == 1
 
 
+def test_mark_cooked_converts_bulk_inventory_units(tmp_path):
+    """Cooking 2 cups of milk when 1 gal is in the fridge leaves 0.875 gal (14 cups)."""
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Pudding", servings=2)
+    recipes.add_ingredient(conn, r, "milk", 2.0, "cup")
+    milk = items.get_or_create(conn, "milk")
+    inventory.add_item(conn, milk, "fridge", 1.0, unit="gal")
+    entry_id = planner.add_entry(conn, r, MID_WEEK)
+
+    planner.mark_cooked(conn, entry_id)
+
+    assert inventory.get_quantity(conn, milk, unit="gal") == 0.875
+    assert inventory.get_quantity(conn, milk, unit="cup") == 14.0
+
+
 def test_cooked_consumes_and_floors(tmp_path):
     conn = _fresh_conn(tmp_path)
     recipe_id = _egg_recipe(conn, servings=2, eggs=4.0)

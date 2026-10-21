@@ -39,3 +39,15 @@ def test_alias_redirects_after_manual_link(tmp_path):
     items.get_or_create_with_alias(conn, "Roma tomatoes")
     items.rename_alias(conn, "roma tomatoes", tomatoes_id)
     assert items.get_or_create_with_alias(conn, "roma tomatoes") == tomatoes_id
+
+
+def test_item_category_create_and_update(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    milk_id = items.get_or_create(conn, "Milk", category="Dairy")
+    rows = items.list_items(conn)
+    assert rows[0]["name"] == "milk"
+    assert rows[0]["category"] == "dairy"
+
+    items.set_category(conn, milk_id, "  Refrigerated  ")
+    rows = items.list_items(conn)
+    assert rows[0]["category"] == "refrigerated"

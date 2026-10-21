@@ -2,11 +2,19 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 from openfresh import db, inventory, items, listgen, pricing, recipes, settings
 
 WEEK_START = "2026-10-19"  # a Monday
 MID_WEEK = "2026-10-22"
 NEXT_WEEK = "2026-10-26"  # exactly week_start + 7 -> outside the window
+
+
+@pytest.fixture(autouse=True)
+def _no_network_openprices(monkeypatch):
+    """Avoid real network calls to Open Prices during unit tests."""
+    monkeypatch.setattr(pricing, "make_lookup", lambda: (lambda _name: None))
 
 
 def _fresh_conn(tmp_path):
@@ -134,11 +142,34 @@ def test_lines_carry_price_source(tmp_path):
     pricing.set_estimate(conn, eggs, "dairy", 3.0, "USD")
     _plan(conn, r, MID_WEEK)
 
-    lines = listgen.generate_list(conn, WEEK_START)
+    lines = listgen.generate_list(conn, WEEK_START, lookup=None)
 
     assert len(lines) == 1
     assert lines[0]["price_source"] == "estimate"
     assert lines[0]["price"] == 18.0  # 3.0 per unit x 6 needed
+
+
+def test_listgen_bulk_package_and_cross_unit_inventory(tmp_path):
+    """1 cup milk needed when 1 gal is $4.00 -> $0.25; and if 0.5 gal (8 cups)
+    is in inventory and recipe needs 10 cups, only 2 cups ($0.50) are listed."""
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Custard", servings=2)
+    recipes.add_ingredient(conn, r, "milk", 10.0, "cup")
+    milk = items.get_or_create(conn, "milk", category="dairy")
+    inventory.add_item(conn, milk, "fridge", 0.5, unit="gal")  # 8 cups on hand
+    pricing.set_estimate(
+        conn, None, "dairy", 4.0, "USD",
+        package_quantity=1.0, package_unit="gal",
+    )
+    _plan(conn, r, MID_WEEK)
+
+    lines = listgen.generate_list(conn, WEEK_START, lookup=None)
+
+    assert len(lines) == 1
+    assert lines[0]["quantity"] == 2.0  # 10 cups - 8 cups (0.5 gal)
+    assert lines[0]["unit"] == "cup"
+    assert lines[0]["price"] == 0.50    # 2 cups / 16 cups * $4.00
+    assert lines[0]["price_source"] == "estimate"
 
 
 def test_lines_carry_currency(tmp_path):

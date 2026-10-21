@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from openfresh import inventory, pricing, recipes, settings
+from openfresh import inventory, listgen, pricing, recipes, settings
 
 MEALS_PER_WEEK_KEY = "meals_per_week"
 MEALS_PER_WEEK_DEFAULT = 5
@@ -98,10 +98,10 @@ def mark_cooked(conn: sqlite3.Connection, entry_id: int) -> None:
         "UPDATE plan_entries SET cooked = 1 WHERE id = ?", (entry_id,)
     )
     conn.commit()
-    for item_id, _raw, quantity, _unit, staple in _scaled_ingredients(conn, entry):
+    for item_id, _raw, quantity, unit, staple in _scaled_ingredients(conn, entry):
         if staple or quantity is None or item_id is None:
             continue
-        inventory.consume(conn, item_id, quantity, source="cooking")
+        inventory.consume(conn, item_id, quantity, source="cooking", unit=unit)
 
 
 def get_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
@@ -144,27 +144,53 @@ def list_entries(
 
 
 def _recipe_estimate(
-    conn: sqlite3.Connection, recipe_id: int
+    conn: sqlite3.Connection,
+    recipe_id: int,
+    lookup=pricing._DEFAULT_LOOKUP,
 ) -> float:
-    """Estimated cost of cooking a recipe for the household size.
+    """Estimated net cost of cooking a recipe for the household size.
 
-    Scales the same way listgen does (household_size / recipe servings) and
-    prices each quantified ingredient via ``pricing.price_item``. Unpriced or
-    unquantified ingredients contribute 0. Missing recipe yields 0.0.
+    Scales the same way listgen does (household_size / recipe servings), skips
+    staples and unquantified ingredients, subtracts on-hand inventory, and
+    prices the remaining need via ``pricing.price_item`` and ``pricing.convert``
+    (accounting for bulk package sizes and culinary unit conversions).
     """
-    recipe = recipes.get_recipe(conn, recipe_id)
-    if recipe is None or recipe["servings"] < 1:
+    entry = {"recipe_id": recipe_id, "servings_override": None}
+    scaled = _scaled_ingredients(conn, entry)
+    if not scaled:
         return 0.0
-    scale = settings.get_household_size(conn) / recipe["servings"]
-    total = 0.0
-    for ing in recipe["ingredients"]:
-        if ing["quantity"] is None or ing["item_id"] is None:
+
+    # Group by (item_id, unit) within the recipe before subtracting inventory
+    need: dict[tuple[int, str], float] = {}
+    for item_id, _raw, quantity, unit, staple in scaled:
+        if staple or quantity is None or item_id is None:
             continue
-        priced = pricing.price_item(conn, ing["item_id"])
+        key = (item_id, unit)
+        need[key] = need.get(key, 0.0) + quantity
+
+    total = 0.0
+    for (item_id, unit), qty in need.items():
+        net_qty = max(0.0, qty - inventory.get_quantity(conn, item_id, unit))
+        if net_qty <= 0:
+            continue
+        priced = pricing.price_item(conn, item_id, lookup=lookup)
         if priced is None:
             continue
-        total += priced[0] * ing["quantity"] * scale
-    return total
+        total += pricing.convert(conn, item_id, net_qty, unit, priced, "")
+    return round(total, 6)
+
+
+def _week_estimated_cost(
+    conn: sqlite3.Connection, week_start: str, lookup=pricing._DEFAULT_LOOKUP
+) -> float:
+    """Total estimated grocery list cost for the week starting at week_start."""
+    return float(
+        sum(
+            line["price"]
+            for line in listgen.generate_list(conn, week_start, lookup=lookup)
+            if line["price"] is not None
+        )
+    )
 
 
 def _round_robin_pick(
@@ -172,6 +198,9 @@ def _round_robin_pick(
     all_recipes: list[dict],
     budget_target: float | None,
     week_cost: float,
+    lookup=pricing._DEFAULT_LOOKUP,
+    week_start: str | None = None,
+    date_iso: str | None = None,
 ) -> dict | None:
     """Pick the least-recently-planned recipe that fits the budget.
 
@@ -191,7 +220,16 @@ def _round_robin_pick(
     for recipe in sorted(all_recipes, key=key):
         if budget_target is None:
             return recipe
-        if week_cost + _recipe_estimate(conn, recipe["id"]) <= budget_target:
+        if week_start is not None and date_iso is not None:
+            cur = conn.execute(
+                "INSERT INTO plan_entries (recipe_id, date) VALUES (?, ?)",
+                (recipe["id"], date_iso),
+            )
+            projected = _week_estimated_cost(conn, week_start, lookup=lookup)
+            conn.execute("DELETE FROM plan_entries WHERE id = ?", (cur.lastrowid,))
+            if projected <= budget_target:
+                return recipe
+        elif week_cost + _recipe_estimate(conn, recipe["id"], lookup=lookup) <= budget_target:
             return recipe
     return None
 
@@ -200,6 +238,7 @@ def auto_populate(
     conn: sqlite3.Connection,
     week_start: str,
     chooser=None,
+    lookup=pricing._DEFAULT_LOOKUP,
 ) -> list[int]:
     """Deterministically fill the week up to ``meals_per_week`` entries.
 
@@ -249,8 +288,10 @@ def auto_populate(
         if budget_row is not None and float(budget_row["target"]) > 0
         else None
     )
-    week_cost = sum(
-        _recipe_estimate(conn, entry["recipe_id"]) for entry in existing
+    week_cost = (
+        _week_estimated_cost(conn, week_start, lookup=lookup)
+        if budget_target is not None
+        else 0.0
     )
 
     all_recipes = recipes.list_recipes(conn)
@@ -271,7 +312,15 @@ def auto_populate(
                 conn, all_recipes, {"week_start": week_start, "date": iso}
             )
         if pick is None:
-            pick = _round_robin_pick(conn, all_recipes, budget_target, week_cost)
+            pick = _round_robin_pick(
+                conn,
+                all_recipes,
+                budget_target,
+                week_cost,
+                lookup=lookup,
+                week_start=week_start,
+                date_iso=iso,
+            )
             if pick is None:  # everything would push the week over budget
                 break
         recipe_id = pick["id"]
@@ -280,5 +329,5 @@ def auto_populate(
         taken_dates.add(iso)
         slots -= 1
         if budget_target is not None:
-            week_cost += _recipe_estimate(conn, recipe_id)
+            week_cost = _week_estimated_cost(conn, week_start, lookup=lookup)
     return created

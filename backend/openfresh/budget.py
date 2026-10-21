@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from openfresh import listgen
+from openfresh import listgen, pricing
 
 
 def set_budget(
@@ -64,7 +64,7 @@ def _spend_in_window(
 def week_summary(
     conn: sqlite3.Connection,
     week_start: str,
-    lookup=None,
+    lookup=pricing._DEFAULT_LOOKUP,
 ) -> dict:
     """Estimated vs actual for the week starting at week_start (ISO date).
 

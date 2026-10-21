@@ -31,7 +31,7 @@ def _week_entries(conn: sqlite3.Connection, week_start: str) -> list:
 def generate_list(
     conn: sqlite3.Connection,
     week_start: str,
-    lookup=None,
+    lookup=pricing._DEFAULT_LOOKUP,
 ) -> list[dict]:
     """Build the grocery list for the week starting at week_start (ISO date).
 

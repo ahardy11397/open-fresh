@@ -113,12 +113,71 @@ def test_budget_pressure_defers_expensive_recipe(tmp_path):
     )
     conn.commit()
 
-    planner.auto_populate(conn, WEEK_START)
+    planner.auto_populate(conn, WEEK_START, lookup=None)
 
     ids = [r["recipe_id"] for r in _planned_rows(conn)]
     assert len(ids) == 5  # 5 * 3.0 = 15.0 fits the 20 budget
     assert set(ids) == {cheap}  # the 25-cost recipe is deferred entirely
     assert pricey not in ids
+
+
+def test_recipe_estimate_subtracts_inventory_skips_staples_and_scales_bulk(tmp_path):
+    """_recipe_estimate skips staples, subtracts on-hand inventory, and uses
+    fractional bulk pricing (1 cup milk from 1 gal @ $4.00 = $0.25)."""
+    from openfresh import inventory
+
+    conn = _fresh_conn(tmp_path)
+    r = recipes.create_recipe(conn, "Cereal & Steak", servings=2)
+    recipes.add_ingredient(conn, r, "salt", 1.0, "tsp", staple=True)
+    recipes.add_ingredient(conn, r, "milk", 1.0, "cup")
+    recipes.add_ingredient(conn, r, "steak", 2.0, "lb")
+
+    salt = _item_id(conn, "salt")
+    milk = _item_id(conn, "milk")
+    steak = _item_id(conn, "steak")
+
+    pricing.set_estimate(conn, salt, None, 5.0, "USD")
+    pricing.set_estimate(
+        conn, milk, "dairy", 4.0, "USD",
+        package_quantity=1.0, package_unit="gal",
+    )
+    pricing.set_estimate(conn, steak, "meat", 10.0, "USD", package_quantity=1.0, package_unit="lb")
+
+    # 1 lb of steak is already in the fridge! So only 1 lb is needed ($10.00).
+    inventory.add_item(conn, steak, "fridge", 1.0, unit="lb")
+
+    # Expected: salt=$0 (staple), milk=1 cup out of 1 gal ($0.25), steak=(2-1) lb ($10.00) -> $10.25
+    est = planner._recipe_estimate(conn, r, lookup=None)
+    assert est == 10.25
+
+
+def test_auto_populate_does_not_double_count_inventory_across_meals(tmp_path):
+    """If 1 lb of steak is in inventory and each Steak Night needs 1 lb ($15/lb),
+    the first Steak Night is free ($0), the second costs $15, and the third
+    would push the week over a $20 budget."""
+    from openfresh import inventory
+
+    conn = _fresh_conn(tmp_path)
+    steak = _item_id(conn, "steak")
+    r_steak = _recipe(conn, "Steak Night", "steak", quantity=1.0, servings=2)
+    pricing.set_estimate(
+        conn, steak, "meat", 15.0, "USD",
+        package_quantity=1.0, package_unit="lb",
+    )
+    # Give the recipe ingredient unit="lb" and stock 1 lb in fridge
+    conn.execute("UPDATE recipe_ingredients SET unit = 'lb'")
+    inventory.add_item(conn, steak, "fridge", 1.0, unit="lb")
+    conn.execute(
+        "INSERT INTO budgets (week_start, target, currency) VALUES (?, ?, ?)",
+        (WEEK_START, 20.0, "USD"),
+    )
+    conn.commit()
+
+    created = planner.auto_populate(conn, WEEK_START, lookup=None)
+
+    # Meal 1 uses the 1 lb in fridge ($0); Meal 2 buys 1 lb ($15 <= $20);
+    # Meal 3 would need another 1 lb ($15 + $15 = $30 > $20) so it stops at 2!
+    assert len(created) == 2
 
 
 def test_no_budget_row_never_skips(tmp_path):

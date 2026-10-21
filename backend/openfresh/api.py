@@ -32,6 +32,11 @@ from openfresh import (
 
 class ItemCreate(BaseModel):
     name: str
+    category: str | None = None
+
+
+class ItemPatch(BaseModel):
+    category: str | None = None
 
 
 class AliasCreate(BaseModel):
@@ -80,6 +85,8 @@ class OwnPriceCreate(BaseModel):
     price: float
     currency: str
     date: date
+    package_quantity: float = Field(default=1.0, gt=0)
+    package_unit: str = ""
 
 
 class EstimateCreate(BaseModel):
@@ -87,6 +94,8 @@ class EstimateCreate(BaseModel):
     category: str | None = None
     price: float
     currency: str
+    package_quantity: float = Field(default=1.0, gt=0)
+    package_unit: str = ""
 
 
 class BudgetPut(BaseModel):
@@ -127,7 +136,19 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     def post_item(
         body: ItemCreate, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
-        return {"item_id": items.get_or_create(conn, body.name)}
+        return {"item_id": items.get_or_create(conn, body.name, body.category)}
+
+    @router.patch("/items/{item_id}")
+    def patch_item(
+        item_id: int,
+        body: ItemPatch,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict:
+        try:
+            items.set_category(conn, item_id, body.category)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return ok()
 
     @router.post("/items/alias")
     def post_alias(
@@ -294,8 +315,13 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     ) -> dict:
         try:
             pricing.record_own_price(
-                conn, body.item_id, body.price, body.currency,
+                conn,
+                body.item_id,
+                body.price,
+                body.currency,
                 body.date.isoformat(),
+                package_quantity=body.package_quantity,
+                package_unit=body.package_unit,
             )
         except sqlite3.IntegrityError as exc:
             raise HTTPException(
@@ -308,7 +334,13 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
         body: EstimateCreate, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict:
         pricing.set_estimate(
-            conn, body.item_id, body.category, body.price, body.currency
+            conn,
+            body.item_id,
+            body.category,
+            body.price,
+            body.currency,
+            package_quantity=body.package_quantity,
+            package_unit=body.package_unit,
         )
         return ok()
 

@@ -15,6 +15,7 @@ _SCHEMA_STATEMENTS: list[str] = [
     """CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
+        category TEXT,
         created_at TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS item_aliases (
@@ -71,14 +72,18 @@ _SCHEMA_STATEMENTS: list[str] = [
         price REAL NOT NULL,
         currency TEXT NOT NULL,
         date TEXT NOT NULL,
-        source TEXT NOT NULL DEFAULT 'manual'
+        source TEXT NOT NULL DEFAULT 'manual',
+        package_quantity REAL NOT NULL DEFAULT 1.0,
+        package_unit TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS price_estimates (
         id INTEGER PRIMARY KEY,
         item_id INTEGER,
         category TEXT,
         price REAL NOT NULL,
-        currency TEXT NOT NULL
+        currency TEXT NOT NULL,
+        package_quantity REAL NOT NULL DEFAULT 1.0,
+        package_unit TEXT NOT NULL DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS budgets (
         week_start TEXT PRIMARY KEY,
@@ -105,8 +110,24 @@ def get_conn(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("items", "category", "TEXT"),
+    ("prices_own", "package_quantity", "REAL NOT NULL DEFAULT 1.0"),
+    ("prices_own", "package_unit", "TEXT NOT NULL DEFAULT ''"),
+    ("price_estimates", "package_quantity", "REAL NOT NULL DEFAULT 1.0"),
+    ("price_estimates", "package_unit", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     """Create the schema. Idempotent: safe to call repeatedly."""
     for statement in _SCHEMA_STATEMENTS:
         conn.execute(statement)
+    for table, col, col_def in _MIGRATIONS:
+        cols = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
     conn.commit()

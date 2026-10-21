@@ -12,6 +12,13 @@ from openfresh.app_factory import create_app
 MONDAY = "2026-10-12"
 
 
+@pytest.fixture(autouse=True)
+def _no_network_openprices(monkeypatch):
+    """Avoid real network calls to Open Prices during HTTP API tests."""
+    from openfresh import pricing
+    monkeypatch.setattr(pricing, "make_lookup", lambda: (lambda _name: None))
+
+
 @pytest.fixture
 def client(tmp_path) -> Iterator[TestClient]:
     app = create_app(db_path=str(tmp_path / "test.db"))
@@ -318,3 +325,35 @@ def test_list_lines_carry_currency(client):
     assert lines
     for line in lines:
         assert line["currency"] == "USD"
+
+
+def test_api_category_and_bulk_pricing_flow(client):
+    # Create item with category
+    resp = client.post("/items", json={"name": "milk", "category": "dairy"})
+    assert resp.status_code == 200
+    milk_id = resp.json()["item_id"]
+
+    # Set category estimate with bulk package size (1 gal = $4.00)
+    resp = client.post(
+        "/prices/estimate",
+        json={
+            "item_id": None,
+            "category": "dairy",
+            "price": 4.0,
+            "currency": "USD",
+            "package_quantity": 1.0,
+            "package_unit": "gal",
+        },
+    )
+    assert resp.status_code == 200
+
+    # Plan a recipe needing 1 cup of milk -> list line price should be $0.25
+    recipe_id = _make_recipe(
+        client, "Pancakes", [{"raw": "milk", "quantity": 1.0, "unit": "cup"}]
+    )
+    client.post("/plan", json={"recipe_id": recipe_id, "date": MONDAY})
+    lines = client.get(f"/list?week_start={MONDAY}").json()
+    assert len(lines) == 1
+    assert lines[0]["item_id"] == milk_id
+    assert lines[0]["price"] == pytest.approx(0.25)
+    assert lines[0]["price_source"] == "estimate"

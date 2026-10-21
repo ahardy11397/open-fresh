@@ -54,7 +54,7 @@ Without a running server, the CLI is just a remote — start Compose first
 
 - `backend/openfresh/` — the core: db, settings, items, inventory,
   recipes, pricing, openprices, listgen, planner, budget, API, CLI.
-- `backend/tests/` — pytest suite (122 tests across 13 test files).
+- `backend/tests/` — pytest suite (131 tests across 13 test files).
 - `docs/superpowers/specs/2026-10-15-open-fresh-design.md` — the design
   spec this implementation follows. Read it before changing behavior.
 - `docs/superpowers/plans/2026-10-15-core-backend-cli.md` — completed
@@ -83,12 +83,12 @@ Without a running server, the CLI is just a remote — start Compose first
 
 ## HTTP API Reference
 
-- **Items**: `GET /items`, `POST /items`, `POST /items/alias`
+- **Items**: `GET /items`, `POST /items`, `PATCH /items/{item_id}`, `POST /items/alias`
 - **Inventory**: `GET /inventory`, `POST /inventory`, `PATCH /inventory/{inventory_id}`, `DELETE /inventory/{inventory_id}`
 - **Recipes**: `GET /recipes`, `POST /recipes`, `GET /recipes/{recipe_id}`, `POST /recipes/{recipe_id}/ingredients`, `DELETE /recipes/{recipe_id}`
 - **Plan**: `GET /plan`, `POST /plan`, `DELETE /plan/{entry_id}`, `POST /plan/{entry_id}/cooked`, `POST /plan/auto-populate`
 - **Grocery List**: `GET /list`
-- **Pricing**: `POST /prices/own`, `POST /prices/estimate`, `GET /prices/resolve?name=...`
+- **Pricing**: `POST /prices/own`, `POST /prices/estimate`, `GET /prices/resolve?name=...` (supports bulk `package_quantity` & `package_unit` with culinary unit conversion, item categories, and default Open Prices lookup)
 - **Budget**: `GET /budget/{week_start}`, `PUT /budget/{week_start}`, `POST /budget/{week_start}/spend`
 - **Settings**: `GET /settings`, `PUT /settings`
 

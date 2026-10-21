@@ -10,6 +10,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
+from openfresh import pricing
+
 _CONSUME_ORDER = ("fridge", "freezer", "pantry")
 
 
@@ -110,6 +112,7 @@ def consume(
     quantity: float,
     source: str = "cooking",
     note: str | None = None,
+    unit: str = "",
 ) -> None:
     """Decrement across the item's locations (fridge, freezer, pantry), floored at 0."""
     remaining = quantity
@@ -117,19 +120,30 @@ def consume(
         if remaining <= 0:
             break
         row = conn.execute(
-            "SELECT id, quantity FROM inventory WHERE item_id = ? AND location = ?",
+            "SELECT id, quantity, unit FROM inventory WHERE item_id = ? AND location = ?",
             (item_id, location),
         ).fetchone()
         if row is None or row["quantity"] <= 0:
             continue
-        new_quantity = max(0.0, row["quantity"] - remaining)
-        applied = new_quantity - row["quantity"]
+        row_unit = row["unit"] or ""
+        if unit and row_unit and unit != row_unit:
+            needed_in_row_unit = pricing.convert_quantity(remaining, unit, row_unit)
+            if needed_in_row_unit is None:
+                # Incompatible units; do not mix
+                continue
+            new_quantity = max(0.0, row["quantity"] - needed_in_row_unit)
+            applied = new_quantity - row["quantity"]
+            consumed_in_req_unit = pricing.convert_quantity(-applied, row_unit, unit) or 0.0
+            remaining = max(0.0, remaining - consumed_in_req_unit)
+        else:
+            new_quantity = max(0.0, row["quantity"] - remaining)
+            applied = new_quantity - row["quantity"]
+            remaining += applied
         conn.execute(
             "UPDATE inventory SET quantity = ?, updated_at = ? WHERE id = ?",
             (new_quantity, _now(), row["id"]),
         )
         _log_event(conn, item_id, location, applied, source, note)
-        remaining += applied
     conn.commit()
 
 
@@ -152,8 +166,10 @@ def get_quantity(
 ) -> float:
     """On hand for an item, summed across locations.
 
-    With ``unit=None`` all units are summed; otherwise only stock rows whose
-    unit matches are counted (cross-unit stock is never mixed).
+    With ``unit=None`` all units are summed; otherwise stock rows whose unit
+    matches or is dimensionally convertible to ``unit`` (e.g. ``gal`` -> ``cup``)
+    are converted and summed, while incompatible cross-unit stock (e.g. ``g`` vs
+    ``cup``) is ignored.
     """
     if unit is None:
         row = conn.execute(
@@ -161,13 +177,19 @@ def get_quantity(
             " WHERE item_id = ?",
             (item_id,),
         ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(quantity), 0) AS total FROM inventory"
-            " WHERE item_id = ? AND unit = ?",
-            (item_id, unit),
-        ).fetchone()
-    return float(row["total"])
+        return float(row["total"])
+
+    total = 0.0
+    for row in conn.execute(
+        "SELECT quantity, unit FROM inventory WHERE item_id = ?",
+        (item_id,),
+    ):
+        converted = pricing.convert_quantity(
+            float(row["quantity"]), row["unit"], unit
+        )
+        if converted is not None:
+            total += converted
+    return total
 
 
 def _now() -> str:
