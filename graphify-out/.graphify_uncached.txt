@@ -1,5 +1,0 @@
-/mnt/ssd/projects/open-fresh/IDEA.md
-/mnt/ssd/projects/open-fresh/README.md
-/mnt/ssd/projects/open-fresh/docker-compose.yml
-/mnt/ssd/projects/open-fresh/docs/superpowers/plans/2026-10-15-core-backend-cli.md
-/mnt/ssd/projects/open-fresh/docs/superpowers/specs/2026-10-15-open-fresh-design.md

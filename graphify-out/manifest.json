@@ -1,0 +1,200 @@
+{
+  "backend/openfresh/__init__.py": {
+    "mtime": 1792367944.2322156,
+    "seen": 1792541351.9176095,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "backend/openfresh/api.py": {
+    "mtime": 1792367944.2323031,
+    "seen": 1792541351.9176157,
+    "ast_hash": "769591cb4e639a58786b8a15a557ef17",
+    "semantic_hash": "769591cb4e639a58786b8a15a557ef17"
+  },
+  "backend/openfresh/app_factory.py": {
+    "mtime": 1792367944.2323031,
+    "seen": 1792541351.9176185,
+    "ast_hash": "abe8d907a7cdb58cd7a20f1749835627",
+    "semantic_hash": "abe8d907a7cdb58cd7a20f1749835627"
+  },
+  "backend/openfresh/budget.py": {
+    "mtime": 1792367944.2323031,
+    "seen": 1792541351.9176202,
+    "ast_hash": "f1ad1dc54295416797f78add772725d5",
+    "semantic_hash": "f1ad1dc54295416797f78add772725d5"
+  },
+  "backend/openfresh/cli.py": {
+    "mtime": 1792367944.2323031,
+    "seen": 1792541351.9176219,
+    "ast_hash": "15e7e43826dae760f422587013e83831",
+    "semantic_hash": "15e7e43826dae760f422587013e83831"
+  },
+  "backend/openfresh/db.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.917634,
+    "ast_hash": "64dc8d9f575110b581a820bb89f6c390",
+    "semantic_hash": "64dc8d9f575110b581a820bb89f6c390"
+  },
+  "backend/openfresh/inventory.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176357,
+    "ast_hash": "66dc405efc49c477daa8fbc1515ba4bb",
+    "semantic_hash": "66dc405efc49c477daa8fbc1515ba4bb"
+  },
+  "backend/openfresh/items.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176369,
+    "ast_hash": "1513ef6150eecbe0936093ab05ba71a6",
+    "semantic_hash": "1513ef6150eecbe0936093ab05ba71a6"
+  },
+  "backend/openfresh/listgen.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.917638,
+    "ast_hash": "a7d1b7845474f8c34f90f765a23525b5",
+    "semantic_hash": "a7d1b7845474f8c34f90f765a23525b5"
+  },
+  "backend/openfresh/openprices.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176393,
+    "ast_hash": "c001e057955e94015e9385e75d21fd50",
+    "semantic_hash": "c001e057955e94015e9385e75d21fd50"
+  },
+  "backend/openfresh/planner.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176402,
+    "ast_hash": "05dd7753f7e43cea612c3d6fd474b2ed",
+    "semantic_hash": "05dd7753f7e43cea612c3d6fd474b2ed"
+  },
+  "backend/openfresh/pricing.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176416,
+    "ast_hash": "99898b5c70542a0da3f97dc84fd75c06",
+    "semantic_hash": "99898b5c70542a0da3f97dc84fd75c06"
+  },
+  "backend/openfresh/recipes.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.917643,
+    "ast_hash": "ab349f8e1bc984dca8b50c2bdd3c8d6d",
+    "semantic_hash": "ab349f8e1bc984dca8b50c2bdd3c8d6d"
+  },
+  "backend/openfresh/settings.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.917644,
+    "ast_hash": "b5dd2a2ec7ff9df27cb01e7f594aa884",
+    "semantic_hash": "b5dd2a2ec7ff9df27cb01e7f594aa884"
+  },
+  "backend/pyproject.toml": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.917645,
+    "ast_hash": "8562d78cedf94d38d4b7893ec6a374b3",
+    "semantic_hash": "8562d78cedf94d38d4b7893ec6a374b3"
+  },
+  "backend/tests/test_api.py": {
+    "mtime": 1792367944.2323217,
+    "seen": 1792541351.9176464,
+    "ast_hash": "b8e60bb1a5f8647f80f20468a609979a",
+    "semantic_hash": "b8e60bb1a5f8647f80f20468a609979a"
+  },
+  "backend/tests/test_autopopulate.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176476,
+    "ast_hash": "65f6a18a8db2cb6dfdb85c4f5595e4d8",
+    "semantic_hash": "65f6a18a8db2cb6dfdb85c4f5595e4d8"
+  },
+  "backend/tests/test_budget.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176486,
+    "ast_hash": "7127730558b5a3ed00b886d9c14388d7",
+    "semantic_hash": "7127730558b5a3ed00b886d9c14388d7"
+  },
+  "backend/tests/test_cli.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.91765,
+    "ast_hash": "65f234a7dd1d3e37d1b59f72bf346fc6",
+    "semantic_hash": "65f234a7dd1d3e37d1b59f72bf346fc6"
+  },
+  "backend/tests/test_db.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.917651,
+    "ast_hash": "681136d965488bd987a7b865814b033c",
+    "semantic_hash": "681136d965488bd987a7b865814b033c"
+  },
+  "backend/tests/test_inventory.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176521,
+    "ast_hash": "8c4a97b98d9687e02ca33feaf0392cb4",
+    "semantic_hash": "8c4a97b98d9687e02ca33feaf0392cb4"
+  },
+  "backend/tests/test_items.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176536,
+    "ast_hash": "a72d71e6b40ad0c9f6206b915ca2d282",
+    "semantic_hash": "a72d71e6b40ad0c9f6206b915ca2d282"
+  },
+  "backend/tests/test_listgen.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.917655,
+    "ast_hash": "f6bcfef6e7ac7341208b35c44af77f50",
+    "semantic_hash": "f6bcfef6e7ac7341208b35c44af77f50"
+  },
+  "backend/tests/test_openprices.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176564,
+    "ast_hash": "9399f54d08389bb0127d54c6d7af1f49",
+    "semantic_hash": "9399f54d08389bb0127d54c6d7af1f49"
+  },
+  "backend/tests/test_planner.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176574,
+    "ast_hash": "dc67510db3b7e0402e7127b571822bae",
+    "semantic_hash": "dc67510db3b7e0402e7127b571822bae"
+  },
+  "backend/tests/test_pricing.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176586,
+    "ast_hash": "da59f22043b6abf9a788041c211b3e42",
+    "semantic_hash": "da59f22043b6abf9a788041c211b3e42"
+  },
+  "backend/tests/test_recipes.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.91766,
+    "ast_hash": "33d4547e27f07e6591727c2123e3e9f7",
+    "semantic_hash": "33d4547e27f07e6591727c2123e3e9f7"
+  },
+  "backend/tests/test_settings.py": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176612,
+    "ast_hash": "44c4bf313cb4c6decc86999aee593809",
+    "semantic_hash": "44c4bf313cb4c6decc86999aee593809"
+  },
+  "IDEA.md": {
+    "mtime": 1792084416.1537945,
+    "seen": 1792541351.9176621,
+    "ast_hash": "6b8a932412d40072b1cb1ee4747967d7",
+    "semantic_hash": "6b8a932412d40072b1cb1ee4747967d7"
+  },
+  "README.md": {
+    "mtime": 1792541059.1689303,
+    "seen": 1792541351.9176636,
+    "ast_hash": "9ecc682664cf4a899ac9b4bce269565f",
+    "semantic_hash": "9ecc682664cf4a899ac9b4bce269565f"
+  },
+  "docker-compose.yml": {
+    "mtime": 1792367944.233617,
+    "seen": 1792541351.9176645,
+    "ast_hash": "973889831a09788446a871f0270d4900",
+    "semantic_hash": "973889831a09788446a871f0270d4900"
+  },
+  "docs/superpowers/plans/2026-10-15-core-backend-cli.md": {
+    "mtime": 1792541078.988814,
+    "seen": 1792541351.9176657,
+    "ast_hash": "6d1e4f74d6c95ce5f8ba06ff0c567dd6",
+    "semantic_hash": "6d1e4f74d6c95ce5f8ba06ff0c567dd6"
+  },
+  "docs/superpowers/specs/2026-10-15-open-fresh-design.md": {
+    "mtime": 1792088960.5386221,
+    "seen": 1792541351.917667,
+    "ast_hash": "f9913c5fa3106e8954078e0959ccb619",
+    "semantic_hash": "f9913c5fa3106e8954078e0959ccb619"
+  }
+}

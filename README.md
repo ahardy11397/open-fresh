@@ -53,10 +53,51 @@ Without a running server, the CLI is just a remote — start Compose first
 ## Layout
 
 - `backend/openfresh/` — the core: db, settings, items, inventory,
-  recipes, pricing, listgen, planner, budget, API, CLI.
-- `backend/tests/` — pytest suite.
+  recipes, pricing, openprices, listgen, planner, budget, API, CLI.
+- `backend/tests/` — pytest suite (122 tests across 13 test files).
 - `docs/superpowers/specs/2026-10-15-open-fresh-design.md` — the design
   spec this implementation follows. Read it before changing behavior.
+- `docs/superpowers/plans/2026-10-15-core-backend-cli.md` — completed
+  implementation plan for the core backend and CLI.
+
+## CLI Reference
+
+| Command | Description |
+| --- | --- |
+| `openfresh add-recipe <url>` | Create a recipe stub from a URL |
+| `openfresh recipes` | List all recipes in the cookbook |
+| `openfresh plan [week_start]` | Show the meal plan for a week (defaults to current Monday) |
+| `openfresh plan-add <recipe_id> <date>` | Add a recipe to the plan on `YYYY-MM-DD` |
+| `openfresh plan-cook <entry_id>` | Mark a planned meal as cooked (consumes ingredients from inventory) |
+| `openfresh plan-remove <entry_id>` | Remove a planned meal entry |
+| `openfresh autoplan` | Auto-populate the current week's meal plan |
+| `openfresh list [week_start]` | Generate the priced grocery list (`plan needs − inventory`) |
+| `openfresh inventory` | List all pantry, fridge, and freezer inventory |
+| `openfresh inv-add <name> <location> <qty> [unit]` | Add stock to `pantry`, `fridge`, or `freezer` |
+| `openfresh inv-adjust <inventory_id> <delta>` | Adjust an inventory item's quantity (`+` or `-`, clamped at `0`) |
+| `openfresh inv-remove <inventory_id>` | Remove an inventory item |
+| `openfresh budget <week_start> [target]` | Show (or set the target for) a week's budget |
+| `openfresh spend <week_start>` | Show a week's budget and spend summary |
+| `openfresh set <key> <value>` | Update a setting (`household_size`, `meals_per_week`, `preferred_days`) |
+| `openfresh show <key>` | Print a setting value |
+
+## HTTP API Reference
+
+- **Items**: `GET /items`, `POST /items`, `POST /items/alias`
+- **Inventory**: `GET /inventory`, `POST /inventory`, `PATCH /inventory/{inventory_id}`, `DELETE /inventory/{inventory_id}`
+- **Recipes**: `GET /recipes`, `POST /recipes`, `GET /recipes/{recipe_id}`, `POST /recipes/{recipe_id}/ingredients`, `DELETE /recipes/{recipe_id}`
+- **Plan**: `GET /plan`, `POST /plan`, `DELETE /plan/{entry_id}`, `POST /plan/{entry_id}/cooked`, `POST /plan/auto-populate`
+- **Grocery List**: `GET /list`
+- **Pricing**: `POST /prices/own`, `POST /prices/estimate`, `GET /prices/resolve?name=...`
+- **Budget**: `GET /budget/{week_start}`, `PUT /budget/{week_start}`, `POST /budget/{week_start}/spend`
+- **Settings**: `GET /settings`, `PUT /settings`
+
+## Project Status
+
+- [x] **Core Backend & CLI**: SQLite state layer (WAL), canonical items & aliases, source-tagged inventory, cookbook, layered pricing (own library, Open Prices client, category estimates), grocery list generator, deterministic auto-planner with chooser hook, weekly budget tracking, FastAPI HTTP server, thin CLI client, Docker Compose packaging.
+- [ ] **Recipe & Receipt Ingest Pipeline**: Webpage (`schema.org/Recipe` + local LLM fallback), video transcript (`yt-dlp` + local LLM), and receipt photo extraction.
+- [ ] **Laya Decision Model**: In-process ONNX Runtime integration into the planner's `chooser` hook.
+- [ ] **React Frontend**: Mobile- and desktop-friendly web interface for Planner, Grocery List, Calendar, Cookbook, Kitchen Inventory, Budget, and Settings.
 
 ## Development
 
