@@ -14,11 +14,10 @@ from datetime import date, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from openfresh import (
     budget,
-    db,
     ingest,
     inventory,
     items,
@@ -81,6 +80,14 @@ class IngredientIn(BaseModel):
     quantity: float | None = None
     unit: str = ""
     staple: bool = False
+
+    @model_validator(mode="after")
+    def validate_raw_or_name(self) -> IngredientIn:
+        has_raw = bool(self.raw and self.raw.strip())
+        has_name = bool(self.name and self.name.strip())
+        if not has_raw and not has_name:
+            raise ValueError("Either raw or name must be provided")
+        return self
 
 
 class RecipeIngestBody(BaseModel):

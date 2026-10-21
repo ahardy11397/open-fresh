@@ -474,3 +474,29 @@ def test_reingest_and_patch_planned_recipe_preserves_plan_fk(client, monkeypatch
     assert "carrot" in by_name
     assert by_name["carrot"]["quantity"] == pytest.approx(2.0)
 
+
+def test_patch_recipe_empty_ingredient_returns_422(client):
+    recipe_id = _make_recipe(client, "Salad", [{"raw": "lettuce"}])
+
+    # Empty ingredient dict (neither raw nor name)
+    resp = client.patch(
+        f"/recipes/{recipe_id}",
+        json={"ingredients": [{}]},
+    )
+    assert resp.status_code == 422
+
+    # Blank strings for both raw and name
+    resp2 = client.patch(
+        f"/recipes/{recipe_id}",
+        json={"ingredients": [{"raw": "   ", "name": "   "}]},
+    )
+    assert resp2.status_code == 422
+
+    # Providing only name succeeds
+    resp3 = client.patch(
+        f"/recipes/{recipe_id}",
+        json={"ingredients": [{"name": "cucumber", "quantity": 1.0}]},
+    )
+    assert resp3.status_code == 200
+
+

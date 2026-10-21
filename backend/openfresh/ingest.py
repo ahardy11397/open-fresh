@@ -2,6 +2,7 @@
 
 import html
 import json
+import math
 import os
 import re
 import sqlite3
@@ -64,6 +65,36 @@ UNIT_ALIASES = {
     "cans": "can",
     "bunch": "bunch",
     "bunches": "bunch",
+    "ml": "ml",
+    "ml.": "ml",
+    "milliliter": "ml",
+    "milliliters": "ml",
+    "millilitre": "ml",
+    "millilitres": "ml",
+    "l": "l",
+    "l.": "l",
+    "liter": "l",
+    "liters": "l",
+    "litre": "l",
+    "litres": "l",
+    "pt": "pt",
+    "pt.": "pt",
+    "pint": "pt",
+    "pints": "pt",
+    "qt": "qt",
+    "qt.": "qt",
+    "quart": "qt",
+    "quarts": "qt",
+    "gal": "gal",
+    "gal.": "gal",
+    "gallon": "gal",
+    "gallons": "gal",
+    "fl oz": "fl oz",
+    "fl. oz.": "fl oz",
+    "fl. oz": "fl oz",
+    "fl oz.": "fl oz",
+    "fluid ounce": "fl oz",
+    "fluid ounces": "fl oz",
 }
 
 UNICODE_FRACTION_CHARS = "½¼¾⅓⅔⅛⅜⅝⅞⅕⅖⅗⅘⅙⅚"
@@ -107,14 +138,18 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
             r"^(\d+)[-\s]+(\d+)\s*/\s*(\d+)(?:\s+|$)(.*)$", s
         )
         if m_mixed_ascii:
-            qty = float(m_mixed_ascii.group(1)) + float(m_mixed_ascii.group(2)) / float(m_mixed_ascii.group(3))
-            remainder = m_mixed_ascii.group(4)
+            denom = float(m_mixed_ascii.group(3))
+            if denom != 0:
+                qty = float(m_mixed_ascii.group(1)) + float(m_mixed_ascii.group(2)) / denom
+                remainder = m_mixed_ascii.group(4)
         else:
             # 3. ASCII fraction alone: e.g. "1/2"
             m_frac_ascii = re.match(r"^(\d+)\s*/\s*(\d+)(?:\s+|$)(.*)$", s)
             if m_frac_ascii:
-                qty = float(m_frac_ascii.group(1)) / float(m_frac_ascii.group(2))
-                remainder = m_frac_ascii.group(3)
+                denom = float(m_frac_ascii.group(2))
+                if denom != 0:
+                    qty = float(m_frac_ascii.group(1)) / denom
+                    remainder = m_frac_ascii.group(3)
             else:
                 # 4. Unicode fraction alone: e.g. "½"
                 m_frac_uni = re.match(
@@ -138,41 +173,53 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
 
     if qty is not None:
         remainder = remainder.strip()
-        m_word = re.match(r"^([^\s]+)\s*(.*)$", remainder)
-        if m_word:
-            token = m_word.group(1)
-            after_token = m_word.group(2)
+        m_multi = re.match(
+            r"^(fluid\s+ounces?|fl\.?\s*oz\.?)(?:\s+|$)(.*)$",
+            remainder,
+            re.IGNORECASE,
+        )
+        if m_multi:
+            unit = "fl oz"
+            after_token = m_multi.group(2)
+            name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
+            name = name_part.split(",")[0].strip()
+            quantity = qty
+        else:
+            m_word = re.match(r"^([^\s]+)\s*(.*)$", remainder)
+            if m_word:
+                token = m_word.group(1)
+                after_token = m_word.group(2)
 
-            token_lower = token.lower()
-            unit_key = None
-            if token_lower in UNIT_ALIASES:
-                unit_key = token_lower
-            elif token_lower.rstrip(".,") in UNIT_ALIASES:
-                unit_key = token_lower.rstrip(".,")
+                token_lower = token.lower()
+                unit_key = None
+                if token_lower in UNIT_ALIASES:
+                    unit_key = token_lower
+                elif token_lower.rstrip(".,") in UNIT_ALIASES:
+                    unit_key = token_lower.rstrip(".,")
 
-            if unit_key is not None:
-                unit = UNIT_ALIASES[unit_key]
-                name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
-                name = name_part.split(",")[0].strip()
-                quantity = qty
-            else:
-                # Unrecognized unit word.
-                # If followed by "of " (e.g. "1 glug of olive oil"), treat as unquantified odd-unit phrase.
-                if re.match(r"^of\s+", after_token, re.IGNORECASE):
-                    quantity = None
-                    unit = ""
+                if unit_key is not None:
+                    unit = UNIT_ALIASES[unit_key]
                     name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
                     name = name_part.split(",")[0].strip()
-                else:
-                    # e.g. "4 eggs" or "2 medium onions, diced"
                     quantity = qty
-                    unit = ""
-                    name_part = remainder
-                    name = name_part.split(",")[0].strip()
-        else:
-            quantity = qty
-            unit = ""
-            name = ""
+                else:
+                    # Unrecognized unit word.
+                    # If followed by "of " (e.g. "1 glug of olive oil"), treat as unquantified odd-unit phrase.
+                    if re.match(r"^of\s+", after_token, re.IGNORECASE):
+                        quantity = None
+                        unit = ""
+                        name_part = re.sub(r"^of\s+", "", after_token, flags=re.IGNORECASE)
+                        name = name_part.split(",")[0].strip()
+                    else:
+                        # e.g. "4 eggs" or "2 medium onions, diced"
+                        quantity = qty
+                        unit = ""
+                        name_part = remainder
+                        name = name_part.split(",")[0].strip()
+            else:
+                quantity = qty
+                unit = ""
+                name = ""
     else:
         # No leading number
         quantity = None
@@ -201,12 +248,18 @@ def parse_iso_duration(value: str | None) -> str | None:
     if not val:
         return None
 
+    if val.upper() in ("P", "PT"):
+        return None
+
     m = re.match(
         r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$",
         val,
         re.IGNORECASE,
     )
     if m:
+        if not any(m.group(g) is not None for g in ("days", "hours", "minutes", "seconds")):
+            return None
+
         days = int(m.group("days")) if m.group("days") else 0
         hours = int(m.group("hours")) if m.group("hours") else 0
         minutes = int(m.group("minutes")) if m.group("minutes") else 0
@@ -224,8 +277,7 @@ def parse_iso_duration(value: str | None) -> str | None:
 
         if parts:
             return " ".join(parts)
-        if val.upper() in ("PT0M", "PT0S", "PT0H", "P0D"):
-            return "0m"
+        return "0m"
 
     return val
 
@@ -233,7 +285,7 @@ def parse_iso_duration(value: str | None) -> str | None:
 def _is_recipe_type(val: Any) -> bool:
     if isinstance(val, str):
         s = val.strip().lower()
-        return s == "recipe" or s.endswith("/recipe")
+        return s == "recipe" or s.endswith("/recipe") or s.endswith(":recipe")
     if isinstance(val, list):
         return any(_is_recipe_type(item) for item in val)
     return False
@@ -261,9 +313,11 @@ def _find_recipe_node(data: Any) -> dict[str, Any] | None:
 
 
 def _find_positive_int(val: Any) -> int | None:
+    if isinstance(val, bool):
+        return None
     if isinstance(val, int) and val > 0:
         return val
-    if isinstance(val, float) and val > 0:
+    if isinstance(val, float) and math.isfinite(val) and val > 0:
         return int(val)
     if isinstance(val, str):
         m = re.search(r"(\d+)", val)
@@ -460,14 +514,22 @@ def extract_html_text_and_title(html_content: str) -> tuple[str, str | None]:
     text = re.sub(r"(?i)<noscript\b[^>]*>.*?</noscript>", "", text, flags=re.DOTALL)
     text = re.sub(r"(?i)<svg\b[^>]*>.*?</svg>", "", text, flags=re.DOTALL)
 
-    # 3. Strip all remaining HTML tags, replacing with a space to prevent token collision
+    # 3. Replace block tags with newlines
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</li>|</div>|</h[1-6]>|</tr>", "\n", text)
+
+    # 4. Strip all remaining HTML tags, replacing with a space to prevent token collision
     text = re.sub(r"<[^>]+>", " ", text)
 
-    # 4. Unescape HTML entities
+    # 5. Unescape HTML entities
     text = html.unescape(text)
 
-    # 5. Collapse whitespace cleanly
-    clean_text = " ".join(text.split())
+    # 6. Collapse horizontal whitespace per line and join non-empty lines with \n
+    lines = []
+    for line in text.splitlines():
+        cleaned_line = " ".join(line.split())
+        if cleaned_line:
+            lines.append(cleaned_line)
+    clean_text = "\n".join(lines)
 
     return (clean_text, page_title)
 
@@ -508,6 +570,21 @@ def is_video_url(url: str) -> bool:
 
 def _clean_subtitle_text(text: str) -> str:
     """Strip VTT/SRT headers, cues, timestamps, and duplicate lines from subtitles."""
+    trimmed = text.strip()
+    if trimmed.startswith("{"):
+        try:
+            j_data = json.loads(trimmed)
+            if isinstance(j_data, dict) and "events" in j_data:
+                segs: list[str] = []
+                for ev in j_data.get("events", []):
+                    for s in ev.get("segs", []):
+                        utf8_str = s.get("utf8", "")
+                        if utf8_str:
+                            segs.append(utf8_str)
+                text = "".join(segs)
+        except Exception:
+            pass
+
     lines: list[str] = []
     for line in text.splitlines():
         s = line.strip()
@@ -523,37 +600,94 @@ def _clean_subtitle_text(text: str) -> str:
     return "\n".join(lines)
 
 
-def _extract_subtitle_text(sub_data: Any) -> str:
+def _get_track_text(entry: dict[str, Any], http_client: httpx.Client | None = None) -> str:
+    """Retrieve raw text from a subtitle track entry, fetching url if necessary."""
+    if "data" in entry and entry["data"]:
+        return str(entry["data"])
+    if "text" in entry and entry["text"]:
+        return str(entry["text"])
+    sub_url = entry.get("url")
+    if sub_url and isinstance(sub_url, str):
+        try:
+            if http_client is not None:
+                resp = http_client.get(sub_url)
+            else:
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(sub_url)
+            if resp.status_code < 400:
+                content = resp.text
+                ext = str(entry.get("ext", "")).lower()
+                if ext == "json3" or content.strip().startswith("{"):
+                    try:
+                        j_data = json.loads(content)
+                        if isinstance(j_data, dict) and "events" in j_data:
+                            segs = []
+                            for ev in j_data["events"]:
+                                for s in ev.get("segs", []):
+                                    utf8_str = s.get("utf8", "")
+                                    if utf8_str:
+                                        segs.append(utf8_str)
+                            return "".join(segs)
+                    except Exception:
+                        pass
+                return content
+        except Exception:
+            return ""
+    return ""
+
+
+def _sort_formats(formats: list[Any]) -> list[dict[str, Any]]:
+    pref = {"vtt": 0, "srv1": 1, "ttml": 2, "srt": 3, "json3": 4}
+    valid = [f for f in formats if isinstance(f, dict)]
+    return sorted(
+        valid,
+        key=lambda f: (
+            0 if ("data" in f or "text" in f) else 1,
+            pref.get(str(f.get("ext", "")).lower(), 10),
+        ),
+    )
+
+
+def _sort_lang_keys(keys: list[str]) -> list[str]:
+    def lang_priority(k: str) -> tuple[int, str]:
+        kl = k.lower()
+        if kl in ("en", "en-us", "en-gb", "en-ca", "en-au"):
+            return (0, kl)
+        if kl.startswith("en"):
+            return (1, kl)
+        return (2, kl)
+    return sorted(keys, key=lang_priority)
+
+
+def _extract_subtitle_text(sub_data: Any, http_client: httpx.Client | None = None) -> str:
     """Extract and clean text from various subtitle formats (string, dict, list)."""
     if not sub_data:
         return ""
     if isinstance(sub_data, str):
         return _clean_subtitle_text(sub_data)
     if isinstance(sub_data, list):
-        chunks: list[str] = []
-        for item in sub_data:
-            if isinstance(item, str):
-                chunks.append(item)
-            elif isinstance(item, dict):
-                text = item.get("data") or item.get("text") or ""
-                if text:
-                    chunks.append(str(text))
-        return _clean_subtitle_text("\n".join(chunks))
+        sorted_fmts = _sort_formats(sub_data)
+        for item in sorted_fmts:
+            raw = _get_track_text(item, http_client)
+            if raw:
+                cleaned = _clean_subtitle_text(raw)
+                if cleaned:
+                    return cleaned
+        return ""
     if isinstance(sub_data, dict):
-        langs = ["en", "en-US", "en-GB"] + [
-            k for k in sub_data.keys() if k not in ("en", "en-US", "en-GB")
-        ]
-        for lang in langs:
-            if lang in sub_data:
-                c = _extract_subtitle_text(sub_data[lang])
-                if c:
-                    return c
+        sorted_langs = _sort_lang_keys(list(sub_data.keys()))
+        for lang in sorted_langs:
+            val = sub_data[lang]
+            res = _extract_subtitle_text(val, http_client)
+            if res:
+                return res
     return ""
 
 
 def extract_video_text(
     url: str,
     ytdlp_runner: Any = None,
+    http_client: httpx.Client | None = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Extract transcript, title, and description from a video URL via yt-dlp.
 
@@ -592,7 +726,7 @@ def extract_video_text(
     sub_text: str | None = None
     for sub_key in ("transcript", "requested_subtitles", "subtitles", "automatic_captions"):
         if info.get(sub_key):
-            t = _extract_subtitle_text(info[sub_key])
+            t = _extract_subtitle_text(info[sub_key], http_client=http_client)
             if t:
                 sub_text = t
                 break
@@ -660,10 +794,35 @@ def extract_with_llm(
             raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         raw_content = str(data["choices"][0]["message"]["content"]).strip()
-        if raw_content.startswith("```"):
-            raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
-            raw_content = re.sub(r"\s*```$", "", raw_content)
-        parsed_json = json.loads(raw_content)
+        parsed_json = None
+        # 1. Try stripping exact code fences
+        stripped = raw_content
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+            stripped = re.sub(r"\s*```$", "", stripped)
+        try:
+            parsed_json = json.loads(stripped)
+        except Exception:
+            parsed_json = None
+
+        # 2. If preamble/conversational text exists before/after fence:
+        if parsed_json is None:
+            m_fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_content, re.DOTALL)
+            if m_fence:
+                try:
+                    parsed_json = json.loads(m_fence.group(1))
+                except Exception:
+                    parsed_json = None
+
+        # 3. If no fence or fence parse failed, try outermost JSON object {...}
+        if parsed_json is None:
+            m_brace = re.search(r"(\{.*\})", raw_content, re.DOTALL)
+            if m_brace:
+                try:
+                    parsed_json = json.loads(m_brace.group(1))
+                except Exception:
+                    parsed_json = None
+
         if not isinstance(parsed_json, dict):
             raise ValueError("LLM returned non-dictionary JSON")
     except Exception as exc:
@@ -744,6 +903,8 @@ def extract_with_llm(
                 if qty_val is not None:
                     try:
                         qty_val = float(qty_val)
+                        if not math.isfinite(qty_val):
+                            qty_val = None
                     except (ValueError, TypeError):
                         qty_val = None
 
@@ -751,7 +912,7 @@ def extract_with_llm(
                     original_name = str(ing.get("name") or "").strip()
                     unit_raw = str(ing.get("unit") or "").strip()
                     parts = []
-                    if qty_val is not None:
+                    if qty_val is not None and math.isfinite(qty_val):
                         parts.append(str(int(qty_val)) if qty_val == int(qty_val) else str(qty_val))
                     if unit_raw:
                         parts.append(unit_raw)
@@ -829,7 +990,7 @@ def ingest_recipe(
             )
         else:
             video_text, video_title, error_note = extract_video_text(
-                clean_url, ytdlp_runner=ytdlp_runner
+                clean_url, ytdlp_runner=ytdlp_runner, http_client=http_client
             )
             if video_text is not None:
                 extracted = extract_with_llm(
@@ -868,7 +1029,11 @@ def ingest_recipe(
             fetch_error = str(exc)
 
         if html_content is not None:
-            schema_recipe = extract_schema_org_recipe(html_content)
+            schema_recipe = None
+            try:
+                schema_recipe = extract_schema_org_recipe(html_content)
+            except Exception:
+                schema_recipe = None
             is_complete_jsonld = (
                 schema_recipe is not None
                 and schema_recipe.get("title")

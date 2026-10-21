@@ -1027,4 +1027,186 @@ def test_extract_with_llm_cleans_ingredient_name_descriptors():
     assert oil["staple"] is True
 
 
+def test_parse_ingredient_line_culinary_volume_units():
+    # fl oz variants
+    r1 = parse_ingredient_line("8 fl oz whole milk")
+    assert r1["quantity"] == 8.0
+    assert r1["unit"] == "fl oz"
+    assert r1["name"] == "whole milk"
+
+    r2 = parse_ingredient_line("4 fl. oz. olive oil")
+    assert r2["quantity"] == 4.0
+    assert r2["unit"] == "fl oz"
+    assert r2["name"] == "olive oil"
+    assert r2["staple"] is True
+
+    r3 = parse_ingredient_line("2 fluid ounces maple syrup")
+    assert r3["quantity"] == 2.0
+    assert r3["unit"] == "fl oz"
+    assert r3["name"] == "maple syrup"
+
+    # ml / l
+    r4 = parse_ingredient_line("500 ml milk")
+    assert r4["quantity"] == 500.0
+    assert r4["unit"] == "ml"
+    assert r4["name"] == "milk"
+
+    r5 = parse_ingredient_line("1 l water")
+    assert r5["quantity"] == 1.0
+    assert r5["unit"] == "l"
+    assert r5["name"] == "water"
+    assert r5["staple"] is True
+
+    r6 = parse_ingredient_line("2 liters chicken stock")
+    assert r6["quantity"] == 2.0
+    assert r6["unit"] == "l"
+    assert r6["name"] == "chicken stock"
+
+    # pt / qt / gal
+    r7 = parse_ingredient_line("2 pints strawberries")
+    assert r7["quantity"] == 2.0
+    assert r7["unit"] == "pt"
+    assert r7["name"] == "strawberries"
+
+    r8 = parse_ingredient_line("1 quart vegetable broth")
+    assert r8["quantity"] == 1.0
+    assert r8["unit"] == "qt"
+    assert r8["name"] == "vegetable broth"
+
+    r9 = parse_ingredient_line("1 gal water")
+    assert r9["quantity"] == 1.0
+    assert r9["unit"] == "gal"
+    assert r9["name"] == "water"
+    assert r9["staple"] is True
+
+
+def test_parse_ingredient_line_zero_division_guard():
+    # 1/0 denominator should not crash with ZeroDivisionError
+    r1 = parse_ingredient_line("1/0 tsp salt")
+    assert r1["quantity"] is None
+
+    r2 = parse_ingredient_line("1 1/0 tsp salt")
+    assert r2["quantity"] is None
+
+
+def test_extract_html_text_preserves_block_newlines():
+    html_doc = """
+    <html>
+    <body>
+      <h1>Recipe Title</h1>
+      <p>Intro paragraph.</p>
+      <ul>
+        <li>Step one.</li>
+        <li>Step two.</li>
+      </ul>
+      <div>Footer note.</div>
+    </body>
+    </html>
+    """
+    text, title = extract_html_text_and_title(html_doc)
+    assert "\n" in text
+    lines = text.split("\n")
+    assert "Recipe Title" in lines[0]
+    assert any("Intro paragraph." in line for line in lines)
+    assert any("Step one." in line for line in lines)
+    assert any("Step two." in line for line in lines)
+
+
+def test_extract_video_text_fetches_caption_url():
+    # Track with URL instead of inline data
+    def runner(url):
+        return {
+            "title": "Video with Subtitles URL",
+            "description": "A description.",
+            "subtitles": {
+                "en": [
+                    {
+                        "ext": "vtt",
+                        "url": "https://captions.example.com/subs.vtt",
+                    }
+                ]
+            },
+        }
+
+    vtt_content = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nAdd two eggs to the pan.\n"
+
+    def http_handler(request: httpx.Request) -> httpx.Response:
+        if "subs.vtt" in str(request.url):
+            return httpx.Response(200, text=vtt_content)
+        return httpx.Response(404)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(http_handler))
+    text, title, error = extract_video_text(
+        "https://youtu.be/test-sub-url",
+        ytdlp_runner=runner,
+        http_client=http_client,
+    )
+    assert error is None
+    assert title == "Video with Subtitles URL"
+    assert "Add two eggs to the pan." in text
+
+
+def test_extract_video_text_json3_captions():
+    def runner(url):
+        return {
+            "title": "Video with JSON3 Captions",
+            "description": "Desc.",
+            "subtitles": {
+                "en": [
+                    {
+                        "ext": "json3",
+                        "data": json.dumps({
+                            "events": [
+                                {"segs": [{"utf8": "Chop "}, {"utf8": "the onions."}]}
+                            ]
+                        }),
+                    }
+                ]
+            },
+        }
+
+    text, title, error = extract_video_text("https://youtu.be/json3-sub", ytdlp_runner=runner)
+    assert error is None
+    assert "Chop the onions." in text
+
+
+def test_extract_with_llm_preamble_and_conversational_text():
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = (
+            "Certainly! Here is the recipe you requested:\n\n"
+            "```json\n"
+            "{\n"
+            '  "title": "Conversational Pasta",\n'
+            '  "servings": 2,\n'
+            '  "total_time": "15m",\n'
+            '  "ingredients": [{"raw": "200g pasta", "name": "pasta", "quantity": 200, "unit": "g"}],\n'
+            '  "steps": ["Boil water and cook pasta."]\n'
+            "}\n"
+            "```\n\n"
+            "Hope you enjoy this dish!"
+        )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": content}}]},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    res = extract_with_llm("make conversational pasta", llm_client=client)
+    assert res["title"] == "Conversational Pasta"
+    assert res["servings"] == 2
+    assert res["total_time"] == "15m"
+    assert len(res["ingredients"]) == 1
+    assert res["steps"] == ["Boil water and cook pasta."]
+    assert res["needs_review"] is False
+
+
+def test_parse_iso_duration_edge_cases():
+    assert parse_iso_duration("P") is None
+    assert parse_iso_duration("PT") is None
+    assert parse_iso_duration("PT0H0M") == "0m"
+    assert parse_iso_duration("PT0M") == "0m"
+    assert parse_iso_duration("PT0S") == "0m"
+
+
+
 

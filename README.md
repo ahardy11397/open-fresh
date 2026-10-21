@@ -22,6 +22,7 @@ over the HTTP API, so anything that can talk HTTP can talk to your kitchen.
 
 ```sh
 docker compose up -d
+docker compose exec llm ollama pull gemma3n:e4b
 curl -s localhost:8000/settings
 # {"household_size": 2, "meals_per_week": 5, "preferred_days": "mon,tue,wed,thu,fri,sat,sun"}
 ```
@@ -31,7 +32,8 @@ container), so kitchens survive `docker compose down` and upgrades. The
 service listens on port 8000; a healthcheck polls `GET /settings`.
 Compose also runs an internal `llm` sidecar service (`ollama/ollama:latest`
 with `gemma3n:e4b`) on the private network (no host ports exposed) for
-unstructured recipe extraction fallback.
+unstructured recipe extraction fallback. Pull the model once after starting
+the containers: `docker compose exec llm ollama pull gemma3n:e4b`.
 
 ## Quickstart (CLI)
 
@@ -100,7 +102,7 @@ Without a running server, the CLI is just a remote — start Compose first
 
 - **Deterministic-first**: Webpages with `schema.org/Recipe` JSON-LD are parsed directly in-process without calling the LLM.
 - **Video transcript extraction**: Social and video URLs (YouTube, TikTok, Instagram, etc.) use `yt-dlp` to download subtitles and transcripts before structured extraction.
-- **Internal LLM sidecar**: Docker Compose runs an internal `llm` service (`ollama/ollama:latest` with `gemma3n:e4b`) accessible only inside the Compose network at `http://llm:11434/v1` (no host ports exposed).
+- **Internal LLM sidecar**: Docker Compose runs an internal `llm` service (`ollama/ollama:latest` with `gemma3n:e4b`) accessible only inside the Compose network at `http://llm:11434/v1` (no host ports exposed). Pull the model using `docker compose exec llm ollama pull gemma3n:e4b`.
 - **Never fails loudly**: Any network, format, or LLM error degrades gracefully into a stored recipe with `needs_review = True` and a descriptive `review_notes` message.
 - **Review & correction**: Review flagged recipes with `openfresh review-queue` (or `GET /recipes?needs_review=true`), re-parse pasted text via `POST /recipes/{id}/reingest`, or adjust fields and ingredients with `PATCH /recipes/{id}`.
 

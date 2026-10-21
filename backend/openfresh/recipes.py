@@ -77,6 +77,22 @@ def add_ingredient(
     return ing_id
 
 
+def _hydrate_recipe(row: sqlite3.Row | dict) -> dict:
+    """Hydrate a SQLite row or dict into a full recipe dict with parsed steps."""
+    recipe = dict(row)
+    recipe["needs_review"] = bool(recipe["needs_review"])
+    raw_steps = recipe.get("steps")
+    if raw_steps:
+        try:
+            parsed = json.loads(raw_steps)
+            recipe["steps"] = parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            recipe["steps"] = []
+    else:
+        recipe["steps"] = []
+    return recipe
+
+
 def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
     """Return the recipe as a dict with nested ingredients, or None.
 
@@ -91,15 +107,7 @@ def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
     ).fetchone()
     if row is None:
         return None
-    recipe = dict(row)
-    recipe["needs_review"] = bool(recipe["needs_review"])
-    if recipe.get("steps"):
-        try:
-            recipe["steps"] = json.loads(recipe["steps"])
-        except (json.JSONDecodeError, TypeError):
-            recipe["steps"] = []
-    else:
-        recipe["steps"] = []
+    recipe = _hydrate_recipe(row)
     recipe["ingredients"] = [
         {
             "id": ing["id"],
@@ -141,19 +149,7 @@ def list_recipes(
             " FROM recipes ORDER BY title"
         ).fetchall()
 
-    results: list[dict] = []
-    for row in rows:
-        rec = dict(row)
-        rec["needs_review"] = bool(rec["needs_review"])
-        if rec.get("steps"):
-            try:
-                rec["steps"] = json.loads(rec["steps"])
-            except (json.JSONDecodeError, TypeError):
-                rec["steps"] = []
-        else:
-            rec["steps"] = []
-        results.append(rec)
-    return results
+    return [_hydrate_recipe(row) for row in rows]
 
 
 def update_recipe(
