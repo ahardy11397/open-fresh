@@ -1,6 +1,8 @@
 services:
   openfresh:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "4269:4269"
     environment:

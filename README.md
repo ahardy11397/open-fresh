@@ -23,6 +23,7 @@ over the HTTP API, so anything that can talk HTTP can talk to your kitchen.
 ```sh
 docker compose up -d
 docker compose exec llm ollama pull gemma3n:e4b
+# Open http://localhost:4269/ in your browser for the Web UI!
 curl -s localhost:4269/settings
 # {"household_size": 2, "meals_per_week": 5, "preferred_days": "mon,tue,wed,thu,fri,sat,sun"}
 ```
@@ -34,6 +35,23 @@ Compose also runs an internal `llm` sidecar service (`ollama/ollama:latest`
 with `gemma3n:e4b`) on the private network (no host ports exposed) for
 unstructured recipe extraction fallback. Pull the model once after starting
 the containers: `docker compose exec llm ollama pull gemma3n:e4b`.
+
+The multi-stage build compiles the React frontend (`node:22-alpine`) and
+bundles it into the Python backend image (`python:3.12-slim`), serving both
+the Web UI SPA and the REST API from the single `openfresh` container on port 4269.
+
+## Web UI
+
+Open-fresh includes a fast, responsive single-page React Web UI served directly
+at `http://localhost:4269/`:
+
+- **Planner**: Weekly meal menu, day-by-day recipe scheduling, servings overrides, one-click auto-planning (`autoplan`), and mark-as-cooked buttons (which automatically deduct scaled quantities from inventory).
+- **Grocery List**: Auto-generated priced shopping list (`plan needs − current inventory`), staple toggles, category grouping, estimated line pricing with store-price fallback, manual checklist striking, and one-click "Complete Shopping" to add purchased items into kitchen inventory.
+- **Calendar**: Month-grid overview of meal plans with cooked vs. planned indicators, day-click scheduling, and month navigation.
+- **Cookbook & Review Queue**: Visual cookbook grid with URL/text recipe import, recipe details editor modal with step-by-step editing, re-ingest raw text support, and a dedicated Review Queue tab for flagged imports.
+- **Kitchen Inventory**: Pantry, fridge, and freezer inventory management with location tabs, quick stepper increments/decrements, item creation, and stock deletion.
+- **Budget & Prices**: Weekly target budget tracker, list cost estimates, logged grocery receipts and spend, own price library, and category fallback estimates.
+- **Settings**: Kitchen preferences including household size, target meals per week, and preferred cooking days.
 
 ## Quickstart (CLI)
 
@@ -57,9 +75,12 @@ Without a running server, the CLI is just a remote — start Compose first
 
 ## Layout
 
+- `frontend/` — React 18 + TypeScript + Vite SPA: features (Planner,
+  Grocery List, Calendar, Cookbook, Kitchen Inventory, Budget & Prices,
+  Settings), typed API client, accessible CSS design system, Vitest suite.
 - `backend/openfresh/` — the core: db, settings, items, inventory,
   recipes, pricing, openprices, listgen, planner, budget, API, CLI.
-- `backend/tests/` — pytest suite (131 tests across 13 test files).
+- `backend/tests/` — pytest suite (184 tests across 13 test files).
 - `docs/superpowers/specs/2026-10-15-open-fresh-design.md` — the design
   spec this implementation follows. Read it before changing behavior.
 - `docs/superpowers/plans/2026-10-15-core-backend-cli.md` — completed
@@ -111,12 +132,23 @@ Without a running server, the CLI is just a remote — start Compose first
 - [x] **Core Backend & CLI**: SQLite state layer (WAL), canonical items & aliases, source-tagged inventory, cookbook, layered pricing (own library, Open Prices client, category estimates), grocery list generator, deterministic auto-planner with chooser hook, weekly budget tracking, FastAPI HTTP server, thin CLI client, Docker Compose packaging.
 - [x] **Recipe Ingest Pipeline**: Webpage (`schema.org/Recipe` + local LLM fallback), video transcript (`yt-dlp` + local LLM), review queue, reingest, and partial recipe patch. (Receipt photo scanning deferred to separate phase).
 - [ ] **Laya Decision Model**: In-process ONNX Runtime integration into the planner's `chooser` hook.
-- [ ] **React Frontend**: Mobile- and desktop-friendly web interface for Planner, Grocery List, Calendar, Cookbook, Kitchen Inventory, Budget, and Settings.
+- [x] **React Frontend**: Mobile- and desktop-friendly web interface for Planner, Grocery List, Calendar, Cookbook, Kitchen Inventory, Budget, and Settings served directly by the backend single-container image on port 4269.
 
 ## Development
+
+### Backend
 
 ```sh
 cd backend
 pip install -e . --group dev   # or: pip install -e . pytest
 pytest
+```
+
+### Frontend
+
+```sh
+cd frontend
+npm install
+npm test       # Run Vitest test suite
+npm run build  # Build production bundle to frontend/dist
 ```

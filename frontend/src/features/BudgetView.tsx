@@ -147,6 +147,7 @@ export const BudgetView: React.FC<BudgetViewProps> = ({ weekStart, onError }) =>
       setOwnPkgQty("");
       setOwnPkgUnit("");
       setOwnPriceSuccessMsg("Price recorded!");
+      await loadData();
       setTimeout(() => setOwnPriceSuccessMsg(null), 3000);
     } catch (err: any) {
       onError?.(err.message || "Failed to record price");
@@ -173,6 +174,7 @@ export const BudgetView: React.FC<BudgetViewProps> = ({ weekStart, onError }) =>
       setEstimatePkgQty("");
       setEstimatePkgUnit("");
       setEstimateSuccessMsg("Estimate saved!");
+      await loadData();
       setTimeout(() => setEstimateSuccessMsg(null), 3000);
     } catch (err: any) {
       onError?.(err.message || "Failed to save estimate");
@@ -460,20 +462,35 @@ export const BudgetView: React.FC<BudgetViewProps> = ({ weekStart, onError }) =>
                 </div>
               </div>
 
+              <div className="form-group">
+                <label htmlFor="estimate-price-input">Estimated Price</label>
+                <input
+                  id="estimate-price-input"
+                  type="number"
+                  step="any"
+                  min="0.01"
+                  className="number-input"
+                  placeholder="0.00"
+                  aria-label="Estimate price"
+                  value={estimatePrice}
+                  onChange={(e) => setEstimatePrice(e.target.value)}
+                  required
+                />
+              </div>
+
               <div className="form-row">
                 <div className="form-group flex-1">
-                  <label htmlFor="estimate-price-input">Estimated Price</label>
+                  <label htmlFor="estimate-pkg-qty">Package Qty (optional)</label>
                   <input
-                    id="estimate-price-input"
+                    id="estimate-pkg-qty"
                     type="number"
                     step="any"
-                    min="0.01"
+                    min="0"
                     className="number-input"
-                    placeholder="0.00"
-                    aria-label="Estimate price"
-                    value={estimatePrice}
-                    onChange={(e) => setEstimatePrice(e.target.value)}
-                    required
+                    placeholder="e.g. 500"
+                    aria-label="Estimate package quantity"
+                    value={estimatePkgQty}
+                    onChange={(e) => setEstimatePkgQty(e.target.value)}
                   />
                 </div>
                 <div className="form-group flex-1">

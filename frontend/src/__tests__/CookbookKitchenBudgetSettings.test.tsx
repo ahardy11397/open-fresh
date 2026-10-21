@@ -206,17 +206,40 @@ describe("Cookbook, Kitchen, Budget, and Settings surfaces", () => {
     await user.clear(stepsInput);
     await user.type(stepsInput, "Boil beans\nSimmer 20m");
 
+    // Click "+ Add Ingredient" (adds a blank ingredient row)
+    const addIngBtn = screen.getByRole("button", { name: /\+ Add Ingredient/i });
+    await user.click(addIngBtn);
+
     // Click "Save & Mark Reviewed"
     const saveReviewedBtn = screen.getByRole("button", { name: /Save & Mark Reviewed/i });
     await user.click(saveReviewedBtn);
 
     // Verify PATCH /recipes/2 was called with needs_review: false and review_notes: null
+    // and that blank ingredient row was filtered out
     await waitFor(() => {
       const patchCall = patchRequests.find((r) => r.url.includes("/recipes/2"));
       expect(patchCall).toBeDefined();
       expect(patchCall?.body.needs_review).toBe(false);
       expect(patchCall?.body.review_notes).toBeNull();
       expect(patchCall?.body.title).toBe("Imported Chili (Updated)");
+      expect(patchCall?.body.ingredients).toHaveLength(1);
+      expect(patchCall?.body.ingredients[0].name).toBe("beans");
+    });
+
+    // Switch to "All Recipes" tab, reopen modal and test Escape key closes it
+    const allRecipesTab = screen.getByRole("button", { name: /All Recipes/i });
+    await user.click(allRecipesTab);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /Edit \/ Review/i }).length).toBeGreaterThan(0);
+    });
+
+    const reopenBtn = screen.getAllByRole("button", { name: /Edit \/ Review/i })[0];
+    await user.click(reopenBtn);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
 
@@ -459,6 +482,9 @@ describe("Cookbook, Kitchen, Budget, and Settings surfaces", () => {
     await waitFor(() => {
       expect(screen.getByText("$120.00")).toBeInTheDocument();
     });
+
+    // Verify package quantity input is present in Fallback Estimate form
+    expect(screen.getByLabelText(/Estimate package quantity/i)).toBeInTheDocument();
 
     // Update target budget to 150
     const targetInput = screen.getByLabelText(/Weekly Target/i);

@@ -5,7 +5,7 @@ import { api } from "../api/client";
 export interface RecipeModalProps {
   recipe: Recipe;
   onClose: () => void;
-  onSave: (updated: Recipe) => void;
+  onSave: (updated: Recipe, closeAfterSave?: boolean) => void;
   onDelete?: (id: number) => void;
   onError?: (msg: string | null) => void;
 }
@@ -39,6 +39,16 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
     setIngredients(recipe.ingredients ? [...recipe.ingredients] : []);
   }, [recipe]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const handleIngredientChange = (
     index: number,
     field: keyof Ingredient,
@@ -70,12 +80,16 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
+      const validIngredients = ingredients.filter(
+        (ing) => (ing.name && ing.name.trim()) || (ing.raw && ing.raw.trim())
+      );
+
       const payload: any = {
         title,
         servings: Number(servings) || 1,
         total_time: totalTime || null,
         steps: parsedSteps,
-        ingredients: ingredients.map((ing) => ({
+        ingredients: validIngredients.map((ing) => ({
           name: ing.name?.trim() || null,
           raw: ing.raw || ing.name || "",
           quantity:
@@ -93,7 +107,7 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
       }
 
       const updated = await api.patchRecipe(recipe.id, payload);
-      onSave(updated);
+      onSave(updated, true);
       onClose();
     } catch (err: any) {
       onError?.(err.message || "Failed to save recipe");
@@ -134,7 +148,7 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
       setStepsText(Array.isArray(updated.steps) ? updated.steps.join("\n") : "");
       setIngredients(updated.ingredients ? [...updated.ingredients] : []);
       setReingestText("");
-      onSave(updated);
+      onSave(updated, false);
     } catch (err: any) {
       onError?.(err.message || "Failed to re-extract recipe");
     } finally {
@@ -143,7 +157,16 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
   };
 
   return (
-    <dialog open className="modal-dialog" aria-modal="true">
+    <dialog
+      open
+      className="modal-dialog"
+      aria-modal="true"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          onClose();
+        }
+      }}
+    >
       <div className="modal-backdrop" onClick={onClose} />
       <div className="modal-content">
         <header className="modal-header">

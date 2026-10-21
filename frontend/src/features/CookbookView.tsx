@@ -97,11 +97,15 @@ export const CookbookView: React.FC<CookbookViewProps> = ({
     }
   };
 
-  const handleRecipeSaved = (updated: Recipe) => {
+  const handleRecipeSaved = (updated: Recipe, closeAfter = true) => {
     setRecipes((prev) =>
       prev.map((r) => (r.id === updated.id ? updated : r))
     );
-    setSelectedRecipe(null);
+    if (closeAfter) {
+      setSelectedRecipe(null);
+    } else {
+      setSelectedRecipe(updated);
+    }
     onRefresh?.();
     loadRecipes(activeFilter);
   };
