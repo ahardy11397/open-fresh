@@ -40,9 +40,14 @@ def create_app(
     else:
         resolved_static = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
+    init_conn = db.get_conn(resolved_db)
+    try:
+        db.init_db(init_conn)
+    finally:
+        init_conn.close()
+
     def get_conn() -> Iterator[sqlite3.Connection]:
         conn = db.get_conn(resolved_db)
-        db.init_db(conn)
         try:
             yield conn
         finally:

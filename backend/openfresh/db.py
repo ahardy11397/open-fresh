@@ -106,9 +106,13 @@ _SCHEMA_STATEMENTS: list[str] = [
 
 def get_conn(db_path: str) -> sqlite3.Connection:
     """Open a connection with WAL mode, foreign keys ON, and Row rows."""
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
+    if db_path != ":memory:":
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(mode).lower() != "wal":
+            conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
 

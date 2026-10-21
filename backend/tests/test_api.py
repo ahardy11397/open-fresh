@@ -593,3 +593,24 @@ def test_get_plan_date_range_and_validation(client):
         "Both start_date and end_date must be provided together"
         in resp_only_end.json()["detail"]
     )
+
+
+def test_concurrent_api_requests(client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def call_endpoint(path):
+        return client.get(path).status_code
+
+    paths = [
+        f"/plan?week_start={MONDAY}",
+        "/settings",
+        "/recipes",
+        "/inventory",
+        f"/list?week_start={MONDAY}",
+        f"/budget/{MONDAY}",
+    ] * 3
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        results = list(ex.map(call_endpoint, paths))
+
+    assert all(code == 200 for code in results)
