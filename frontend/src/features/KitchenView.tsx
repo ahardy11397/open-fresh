@@ -1,14 +1,276 @@
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import type { InventoryItem } from "../types";
+import { api } from "../api/client";
 
 interface KitchenViewProps {
-  onError?: (msg: string) => void;
+  onError?: (msg: string | null) => void;
 }
 
-export const KitchenView: React.FC<KitchenViewProps> = () => {
+export const KitchenView: React.FC<KitchenViewProps> = ({ onError }) => {
+  const [activeLocation, setActiveLocation] = useState<"pantry" | "fridge" | "freezer">("pantry");
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Quick-add form
+  const [addName, setAddName] = useState("");
+  const [addCategory, setAddCategory] = useState("");
+  const [addQuantity, setAddQuantity] = useState<number | string>(1);
+  const [addUnit, setAddUnit] = useState("");
+  const [addLocation, setAddLocation] = useState<string>("pantry");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Sync addLocation with activeLocation when tab changes
+  useEffect(() => {
+    setAddLocation(activeLocation);
+  }, [activeLocation]);
+
+  const loadInventory = useCallback(
+    async (location: string) => {
+      setIsLoading(true);
+      try {
+        const data = await api.getInventory(location);
+        setItems(data);
+      } catch (err: any) {
+        onError?.(err.message || "Failed to load inventory");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [onError]
+  );
+
+  useEffect(() => {
+    loadInventory(activeLocation);
+  }, [activeLocation, loadInventory]);
+
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addName.trim()) {
+      onError?.("Item name is required");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      if (addCategory.trim()) {
+        await api.createItem({
+          name: addName.trim(),
+          category: addCategory.trim(),
+        });
+      }
+
+      await api.addInventory({
+        name: addName.trim(),
+        location: addLocation,
+        quantity: Number(addQuantity) || 1,
+        unit: addUnit.trim() || undefined,
+      });
+
+      setAddName("");
+      setAddCategory("");
+      setAddQuantity(1);
+      setAddUnit("");
+
+      await loadInventory(activeLocation);
+    } catch (err: any) {
+      onError?.(err.message || "Failed to add inventory item");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleStepQuantity = async (item: InventoryItem, delta: number) => {
+    try {
+      await api.patchInventory(item.id, delta);
+      await loadInventory(activeLocation);
+    } catch (err: any) {
+      onError?.(err.message || "Failed to update item quantity");
+    }
+  };
+
+  const handleDeleteItem = async (item: InventoryItem) => {
+    try {
+      await api.deleteInventory(item.id);
+      await loadInventory(activeLocation);
+    } catch (err: any) {
+      onError?.(err.message || "Failed to delete item");
+    }
+  };
+
+  const filteredItems = items.filter((item) =>
+    item.item_name.toLowerCase().includes(searchQuery.toLowerCase().trim())
+  );
+
   return (
-    <div className="surface-placeholder">
-      <h2>Kitchen Inventory</h2>
-      <p>Pantry, fridge, and freezer inventory management will be expanded in Task 3.</p>
+    <div className="kitchen-view">
+      {/* Location Navigation & Search */}
+      <div className="kitchen-toolbar">
+        <div className="tab-pill-group">
+          <button
+            type="button"
+            className={`tab-pill ${activeLocation === "pantry" ? "active" : ""}`}
+            onClick={() => setActiveLocation("pantry")}
+          >
+            Pantry
+          </button>
+          <button
+            type="button"
+            className={`tab-pill ${activeLocation === "fridge" ? "active" : ""}`}
+            onClick={() => setActiveLocation("fridge")}
+          >
+            Fridge
+          </button>
+          <button
+            type="button"
+            className={`tab-pill ${activeLocation === "freezer" ? "active" : ""}`}
+            onClick={() => setActiveLocation("freezer")}
+          >
+            Freezer
+          </button>
+        </div>
+
+        <div className="search-bar">
+          <input
+            type="text"
+            className="text-input"
+            placeholder="Search inventory..."
+            aria-label="Search inventory"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Quick Add Form */}
+      <section className="kitchen-add-card">
+        <h3>Add to Kitchen</h3>
+        <form onSubmit={handleQuickAdd} className="kitchen-add-form">
+          <div className="add-form-grid">
+            <input
+              type="text"
+              className="text-input"
+              placeholder="Item name (e.g. Eggs, Rice)"
+              aria-label="Item name"
+              value={addName}
+              onChange={(e) => setAddName(e.target.value)}
+              required
+            />
+            <input
+              type="text"
+              className="text-input"
+              placeholder="Category (e.g. dairy, produce)"
+              aria-label="Category"
+              value={addCategory}
+              onChange={(e) => setAddCategory(e.target.value)}
+            />
+            <div className="qty-unit-row">
+              <input
+                type="number"
+                className="number-input input-qty"
+                placeholder="Qty"
+                step="any"
+                min="0"
+                aria-label="Quantity"
+                value={addQuantity}
+                onChange={(e) => setAddQuantity(e.target.value)}
+                required
+              />
+              <input
+                type="text"
+                className="text-input input-unit"
+                placeholder="Unit (e.g. carton, kg)"
+                aria-label="Unit"
+                value={addUnit}
+                onChange={(e) => setAddUnit(e.target.value)}
+              />
+            </div>
+            <select
+              className="select-input"
+              aria-label="Location"
+              value={addLocation}
+              onChange={(e) => setAddLocation(e.target.value)}
+            >
+              <option value="pantry">Pantry</option>
+              <option value="fridge">Fridge</option>
+              <option value="freezer">Freezer</option>
+            </select>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={isSubmitting || !addName.trim()}
+            >
+              {isSubmitting ? "Adding..." : "Add Item"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Inventory Table / Items List */}
+      <div className="kitchen-table-container">
+        {isLoading ? (
+          <div className="loading-indicator">Loading inventory...</div>
+        ) : filteredItems.length === 0 ? (
+          <div className="empty-state">
+            {searchQuery
+              ? `No items matching "${searchQuery}" in ${activeLocation}.`
+              : `Your ${activeLocation} is currently empty. Add items using the form above.`}
+          </div>
+        ) : (
+          <table className="kitchen-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Quantity</th>
+                <th>Adjust</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.map((item) => (
+                <tr key={item.id} className="inventory-row">
+                  <td className="item-name-cell">
+                    <strong>{item.item_name}</strong>
+                  </td>
+                  <td className="item-qty-cell">
+                    {item.quantity} {item.unit || ""}
+                  </td>
+                  <td className="item-stepper-cell">
+                    <div className="stepper-group">
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => handleStepQuantity(item, -1)}
+                        aria-label={`Decrease ${item.item_name}`}
+                      >
+                        −
+                      </button>
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => handleStepQuantity(item, 1)}
+                        aria-label={`Increase ${item.item_name}`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </td>
+                  <td className="item-action-cell">
+                    <button
+                      type="button"
+                      className="btn-danger btn-sm"
+                      onClick={() => handleDeleteItem(item)}
+                      aria-label={`Delete ${item.item_name}`}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 };
