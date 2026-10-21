@@ -134,6 +134,7 @@ export const App: React.FC = () => {
         )}
         {activeTab === "calendar" && (
           <CalendarView
+            weekStart={weekStart}
             onNavigateToWeek={handleNavigateToWeek}
             onError={setErrorMessage}
           />

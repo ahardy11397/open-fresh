@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 import type { GroceryLine, BudgetSummary } from "../types";
+import { todayIso } from "../utils/date";
 
 interface GroceryListViewProps {
   weekStart: string;
@@ -88,7 +89,7 @@ export const GroceryListView: React.FC<GroceryListViewProps> = ({
               item_id: line.item_id,
               price: actualPrice,
               currency,
-              date: new Date().toISOString().slice(0, 10),
+              date: todayIso(),
               package_quantity: quantity > 0 ? quantity : 1,
               package_unit: unit,
             });
@@ -96,7 +97,7 @@ export const GroceryListView: React.FC<GroceryListViewProps> = ({
               item_id: line.item_id,
               price: actualPrice,
               currency,
-              date: new Date().toISOString().slice(0, 10),
+              date: todayIso(),
               source: "grocery_shopping",
             });
           } catch {

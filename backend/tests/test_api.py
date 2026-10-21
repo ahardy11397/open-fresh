@@ -303,6 +303,17 @@ def test_post_spend_mixed_currency_422(client):
     assert resp.status_code == 422
 
 
+def test_post_spend_direct_endpoint(client):
+    resp = client.post(
+        "/spend",
+        json={"price": 12.50, "currency": "USD", "date": MONDAY},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    summary = client.get(f"/budget/{MONDAY}").json()
+    assert summary["actual"] == 12.50
+
+
 def test_put_budget_keeps_currency_when_not_given(client):
     client.put(f"/budget/{MONDAY}", json={"target": 50.0, "currency": "EUR"})
     client.put(f"/budget/{MONDAY}", json={"target": 60.0})

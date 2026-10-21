@@ -8,6 +8,7 @@ import type {
   GroceryLine,
   BudgetSummary,
 } from "../types";
+import { getMonday } from "../utils/date";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = {
@@ -227,14 +228,18 @@ export const api = {
     );
   },
 
-  postSpend(body: {
-    price: number;
-    currency: string;
-    date: string;
-    source?: string;
-    item_id?: number | null;
-  }): Promise<{ ok: boolean }> {
-    return request<{ ok: boolean }>("/spend", {
+  postSpend(
+    body: {
+      price: number;
+      currency: string;
+      date: string;
+      source?: string;
+      item_id?: number | null;
+    },
+    weekStart?: string
+  ): Promise<{ ok: boolean }> {
+    const ws = weekStart || getMonday(body.date);
+    return request<{ ok: boolean }>(`/budget/${encodeURIComponent(ws)}/spend`, {
       method: "POST",
       body: JSON.stringify(body),
     });

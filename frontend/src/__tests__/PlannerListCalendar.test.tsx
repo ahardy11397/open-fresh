@@ -397,5 +397,20 @@ describe("Planner, Grocery List, and Calendar surfaces", () => {
 
     expect(screen.getByText(/Cooked/i)).toBeInTheDocument();
     expect(screen.getByText(/Planned/i)).toBeInTheDocument();
+
+    // Verify month view renders full grid (>= 28 cells)
+    expect(document.querySelectorAll(".calendar-cell").length).toBeGreaterThanOrEqual(28);
+
+    // Toggle to Week View
+    const weekViewBtn = screen.getByRole("button", { name: /Week View/i });
+    await user.click(weekViewBtn);
+
+    // Verify Week View renders exactly 7 days
+    expect(document.querySelectorAll(".calendar-cell")).toHaveLength(7);
+
+    // Toggle back to Month View
+    const monthViewBtn = screen.getByRole("button", { name: /Month View/i });
+    await user.click(monthViewBtn);
+    expect(document.querySelectorAll(".calendar-cell").length).toBeGreaterThanOrEqual(28);
   });
 });

@@ -566,6 +566,14 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
         )
         return ok()
 
+    @router.post("/spend")
+    def post_spend_direct(
+        body: SpendCreate,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict:
+        start = body.date - timedelta(days=body.date.weekday())
+        return post_spend(week_start=start, body=body, conn=conn)
+
     # --- settings -------------------------------------------------------------
 
     @router.get("/settings")

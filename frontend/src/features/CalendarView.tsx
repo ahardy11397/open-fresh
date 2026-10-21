@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 import type { PlanEntry } from "../types";
-import { getMonthRange, getMonday } from "../utils/date";
+import {
+  getMonthRange,
+  getMonday,
+  addDays,
+  parseLocalDate,
+  formatLocalDate,
+} from "../utils/date";
 
 interface CalendarViewProps {
+  weekStart?: string;
   onNavigateToWeek?: (weekStart: string) => void;
   onError: (msg: string) => void;
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
+  weekStart: initialWeekStart,
   onNavigateToWeek,
   onError,
 }) => {
@@ -51,7 +59,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setCurrentDate(new Date());
   };
 
-  // Month grid calculation
+  // Month title
   const monthName = currentDate.toLocaleString("en-US", {
     month: "long",
     year: "numeric",
@@ -62,7 +70,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const startOffset = (firstDayOfMonth + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  const calendarDays: {
+  const monthDays: {
     dateStr: string;
     dayNum: number;
     inMonth: boolean;
@@ -73,23 +81,50 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   for (let i = startOffset - 1; i >= 0; i--) {
     const d = prevMonthDays - i;
     const prevDate = new Date(year, month - 1, d);
-    const iso = prevDate.toISOString().slice(0, 10);
-    calendarDays.push({ dateStr: iso, dayNum: d, inMonth: false });
+    monthDays.push({
+      dateStr: formatLocalDate(prevDate),
+      dayNum: d,
+      inMonth: false,
+    });
   }
 
   // Days of current month
   for (let d = 1; d <= daysInMonth; d++) {
-    const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    calendarDays.push({ dateStr: iso, dayNum: d, inMonth: true });
+    const curDate = new Date(year, month, d);
+    monthDays.push({
+      dateStr: formatLocalDate(curDate),
+      dayNum: d,
+      inMonth: true,
+    });
   }
 
   // Padding days to fill remaining week grid (multiples of 7)
-  const remaining = (7 - (calendarDays.length % 7)) % 7;
+  const remaining = (7 - (monthDays.length % 7)) % 7;
   for (let d = 1; d <= remaining; d++) {
     const nextDate = new Date(year, month + 1, d);
-    const iso = nextDate.toISOString().slice(0, 10);
-    calendarDays.push({ dateStr: iso, dayNum: d, inMonth: false });
+    monthDays.push({
+      dateStr: formatLocalDate(nextDate),
+      dayNum: d,
+      inMonth: false,
+    });
   }
+
+  const activeWeekStart = initialWeekStart || getMonday(currentDate);
+  const weekDays: {
+    dateStr: string;
+    dayNum: number;
+    inMonth: boolean;
+  }[] = Array.from({ length: 7 }, (_, i) => {
+    const dateStr = addDays(activeWeekStart, i);
+    const d = parseLocalDate(dateStr);
+    return {
+      dateStr,
+      dayNum: d.getDate(),
+      inMonth: d.getMonth() === month,
+    };
+  });
+
+  const calendarDays = viewMode === "week" ? weekDays : monthDays;
 
   const handleDayClick = (dateStr: string) => {
     if (onNavigateToWeek) {
