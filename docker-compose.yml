@@ -2,7 +2,7 @@ services:
   openfresh:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "4269:4269"
     environment:
       OPENFRESH_DB: /data/openfresh.db
       OPENFRESH_LLM_URL: http://llm:11434/v1
@@ -10,7 +10,7 @@ services:
     volumes:
       - ./data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/settings')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4269/settings')"]
       interval: 30s
       timeout: 5s
       retries: 3

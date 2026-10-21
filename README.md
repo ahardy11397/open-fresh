@@ -23,13 +23,13 @@ over the HTTP API, so anything that can talk HTTP can talk to your kitchen.
 ```sh
 docker compose up -d
 docker compose exec llm ollama pull gemma3n:e4b
-curl -s localhost:8000/settings
+curl -s localhost:4269/settings
 # {"household_size": 2, "meals_per_week": 5, "preferred_days": "mon,tue,wed,thu,fri,sat,sun"}
 ```
 
 Data lives in `./data/openfresh.db` on the host (mounted at `/data` in the
 container), so kitchens survive `docker compose down` and upgrades. The
-service listens on port 8000; a healthcheck polls `GET /settings`.
+service listens on port 4269; a healthcheck polls `GET /settings`.
 Compose also runs an internal `llm` sidecar service (`ollama/ollama:latest`
 with `gemma3n:e4b`) on the private network (no host ports exposed) for
 unstructured recipe extraction fallback. Pull the model once after starting
@@ -38,7 +38,7 @@ the containers: `docker compose exec llm ollama pull gemma3n:e4b`.
 ## Quickstart (CLI)
 
 The `openfresh` CLI ships with the backend package and talks to the server
-over HTTP (`OPENFRESH_URL`, default `http://localhost:8000`):
+over HTTP (`OPENFRESH_URL`, default `http://localhost:4269`):
 
 ```sh
 pip install ./backend

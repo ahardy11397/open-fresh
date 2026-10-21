@@ -1,7 +1,7 @@
 """Thin CLI client over the openfresh HTTP API.
 
 Every subcommand is a single HTTP request against ``OPENFRESH_URL``
-(default ``http://localhost:8000``); no business logic and no database
+(default ``http://localhost:4269``); no business logic and no database
 access live here. Exit code 0 on success, 1 on HTTP error with the
 response body printed to stderr.
 """
@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_URL = "http://localhost:8000"
+DEFAULT_URL = "http://localhost:4269"
 
 
 def _current_monday() -> str:
