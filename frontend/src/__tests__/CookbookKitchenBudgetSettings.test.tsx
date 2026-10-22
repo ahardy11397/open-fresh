@@ -52,7 +52,7 @@ describe("Cookbook, Kitchen, Budget, and Settings surfaces", () => {
           total_time: "45m",
           needs_review: true,
           review_notes: "Missing unit on beans",
-          ingredients: [{ name: "beans", quantity: 2, unit: "" }],
+          ingredients: [{ item_name: "beans", raw: "2 beans", quantity: 2, unit: "" }],
           steps: ["Boil beans"],
         };
         recipesData.push(newRecipe);
@@ -93,7 +93,7 @@ describe("Cookbook, Kitchen, Budget, and Settings surfaces", () => {
             total_time: "45m",
             needs_review: true,
             review_notes: "Missing unit on beans",
-            ingredients: [{ name: "beans", quantity: 2, unit: "" }],
+            ingredients: [{ item_name: "beans", raw: "2 beans", quantity: 2, unit: "" }],
             steps: ["Boil beans"],
           },
         } as Response;
@@ -191,9 +191,10 @@ describe("Cookbook, Kitchen, Budget, and Settings surfaces", () => {
     const reviewBtn = screen.getByRole("button", { name: /Edit \/ Review/i });
     await user.click(reviewBtn);
 
-    // Verify RecipeModal dialog opened with review notes banner
+    // Verify RecipeModal dialog opened with review notes banner and ingredient name populated
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("Missing unit on beans");
+      expect(screen.getByLabelText("Ingredient 1 Name")).toHaveValue("beans");
     });
 
     // Edit title

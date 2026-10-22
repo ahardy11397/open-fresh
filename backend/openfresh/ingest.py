@@ -127,6 +127,14 @@ UNIT_ALIASES = {
     "cloves": "clove",
     "can": "can",
     "cans": "can",
+    "box": "box",
+    "boxes": "box",
+    "bag": "bag",
+    "bags": "bag",
+    "jar": "jar",
+    "jars": "jar",
+    "slice": "slice",
+    "slices": "slice",
     "bunch": "bunch",
     "bunches": "bunch",
     "ml": "ml",
@@ -223,13 +231,47 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
                     qty = unicodedata.numeric(m_frac_uni.group(1))
                     remainder = m_frac_uni.group(2)
                 else:
-                    # 5. Decimal or integer: e.g. "2" or "1.5" or ".5"
-                    m_num = re.match(
-                        r"^(\d+(?:\.\d+)?|\.\d+)(?:\s+|$|(?=[a-zA-Z]))(.*)$", s
+                    # 5. Numeric range: e.g. "4-5", "2–3", "1 to 2" -> upper bound
+                    m_range = re.match(
+                        r"^(\d+(?:\.\d+)?)\s*(?:[-–—]|to)\s*(\d+(?:\.\d+)?)(?:\s+|$)(.*)$",
+                        s,
+                        re.IGNORECASE,
                     )
-                    if m_num:
-                        qty = float(m_num.group(1))
-                        remainder = m_num.group(2)
+                    if m_range:
+                        qty = float(m_range.group(2))
+                        remainder = m_range.group(3)
+                    else:
+                        # 6. Decimal or integer: e.g. "2" or "1.5" or ".5"
+                        m_num = re.match(
+                            r"^(\d+(?:\.\d+)?|\.\d+)(?:\s+|$|(?=[a-zA-Z]))(.*)$", s
+                        )
+                        if m_num:
+                            qty = float(m_num.group(1))
+                            remainder = m_num.group(2)
+                        else:
+                            # 7. Informal spoken quantities: "half a <unit>", "a whole <unit>", "a <unit>", or "<unit> of ..."
+                            m_half = re.match(r"^half\s+(?:a|an)\s+(.*)$", s, re.IGNORECASE)
+                            if m_half:
+                                qty = 0.5
+                                remainder = m_half.group(1)
+                            else:
+                                m_indef = re.match(
+                                    r"^(?:a\s+whole|one|a|an)\s+([^\s]+)(?:\s+|$)(.*)$",
+                                    s,
+                                    re.IGNORECASE,
+                                )
+                                if m_indef and m_indef.group(1).lower().rstrip(".,") in UNIT_ALIASES:
+                                    qty = 1.0
+                                    remainder = f"{m_indef.group(1)} {m_indef.group(2)}".strip()
+                                else:
+                                    m_bare_unit = re.match(
+                                        r"^([^\s]+)\s+(of\s+.*)$",
+                                        s,
+                                        re.IGNORECASE,
+                                    )
+                                    if m_bare_unit and m_bare_unit.group(1).lower().rstrip(".,") in UNIT_ALIASES:
+                                        qty = 1.0
+                                        remainder = f"{m_bare_unit.group(1)} {m_bare_unit.group(2)}".strip()
 
     quantity: float | None = None
     unit: str = ""
@@ -286,6 +328,8 @@ def parse_ingredient_line(raw: str) -> dict[str, Any]:
         name = _clean_ingredient_name(remainder)
 
     staple = _is_staple_name(name)
+    if not staple and quantity is None and re.search(r"\bfor\s+greasing\b", raw, re.IGNORECASE):
+        staple = True
     return {
         "raw": raw,
         "name": name,
@@ -736,6 +780,9 @@ def _extract_subtitle_text(sub_data: Any, http_client: httpx.Client | None = Non
                     return cleaned
         return ""
     if isinstance(sub_data, dict):
+        if "url" in sub_data or "data" in sub_data or "text" in sub_data:
+            raw = _get_track_text(sub_data, http_client)
+            return _clean_subtitle_text(raw) if raw else ""
         sorted_langs = _sort_lang_keys(list(sub_data.keys()))
         for lang in sorted_langs:
             val = sub_data[lang]
@@ -785,7 +832,7 @@ def extract_video_text(
     description = str(info["description"]).strip() if info.get("description") else ""
 
     sub_text: str | None = None
-    for sub_key in ("transcript", "requested_subtitles", "subtitles", "automatic_captions"):
+    for sub_key in ("transcript", "subtitles", "requested_subtitles", "automatic_captions"):
         if info.get(sub_key):
             t = _extract_subtitle_text(info[sub_key], http_client=http_client)
             if t:
@@ -807,16 +854,60 @@ def extract_video_text(
     return (combined, video_title, None)
 
 
+_COOKWARE_NAMES = {
+    "baking pan",
+    "baking dish",
+    "baking sheet",
+    "sheet pan",
+    "casserole dish",
+    "pan",
+    "skillet",
+    "frying pan",
+    "saucepan",
+    "stockpot",
+    "pot",
+    "dutch oven",
+    "mixing bowl",
+    "bowl",
+    "griddle",
+    "oven",
+    "air fryer",
+    "slow cooker",
+    "crockpot",
+    "aluminum foil",
+    "foil",
+    "parchment paper",
+    "piping bag",
+}
+
+
+def _is_cookware_name(name: str, raw: str = "") -> bool:
+    low = name.lower().strip()
+    if low in _COOKWARE_NAMES:
+        return True
+    if re.search(r"\b(?:baking\s+pan|baking\s+dish|casserole\s+dish|mixing\s+bowl|frying\s+pan|sheet\s+pan)\b", low):
+        return True
+    if re.search(r"\b(?:nine\s+by\s+13|9\s*x\s*13|9\s+by\s+13)\b", raw.lower()) and "pan" in low:
+        return True
+    return False
+
+
 LLM_SYSTEM_PROMPT = (
     "You are a recipe extraction assistant. Extract structured recipe information "
-    "from the provided text. Return ONLY a valid JSON object with the following fields:\n"
-    "- title: string (recipe name)\n"
+    "from the provided text (which may include a video title, social media caption, "
+    "and spoken transcript). Return ONLY a valid JSON object with the following fields:\n"
+    "- title: string (concise recipe name)\n"
     "- servings: integer (default 2)\n"
     "- total_time: string or null (e.g. '45m', '1h 15m')\n"
     "- ingredients: list of objects with {raw: string, name: string, quantity: float or null, unit: string, staple: boolean}\n"
     "- steps: list of string instruction steps in order\n"
-    "- low_confidence: boolean (true if the text did not contain a clear recipe or ingredients/steps were incomplete)\n"
-    "- review_notes: string or null (explanation if confidence is low or info is missing)\n"
+    "- low_confidence: boolean (true ONLY if the text does not contain a recipe at all)\n"
+    "- review_notes: string or null (explanation ONLY if confidence is low)\n\n"
+    "Important rules for ingredients:\n"
+    "1. NEVER include cookware, bakeware, pans, dishes, bowls, or appliances (e.g. 'baking pan', '9x13 dish', 'skillet', 'oven') in ingredients.\n"
+    "2. Combine multiple mentions of the same ingredient (e.g. 'half a jar of Alfredo sauce' and 'extra Alfredo sauce') into a SINGLE ingredient entry with the combined quantity (e.g. quantity: 1, unit: 'jar').\n"
+    "3. When the speaker lists interchangeable alternatives (e.g. 'pizza sauce, marinara, or spaghetti sauce, whatever you have'), output a SINGLE ingredient entry (e.g. name: 'marinara or pizza sauce') instead of separate entries for each option.\n"
+    "4. Convert informal spoken quantities ('a whole box of...', 'a bag of...', 'half a jar of...', 'a can of...') into numeric quantity and unit (e.g. quantity: 1, unit: 'box'). When an essential ingredient in a casual video transcript is mentioned with 'some' (e.g. 'some mozzarella cheese', 'some marinara sauce'), estimate a sensible standard quantity and unit (e.g. 2 cup shredded cheese, 1 cup sauce) so quantity is not null.\n"
 )
 
 
@@ -942,23 +1033,23 @@ def extract_with_llm(
         raw_ingredients = []
 
     for ing in raw_ingredients:
+        parsed_ing: dict[str, Any] | None = None
         if isinstance(ing, str):
             s = ing.strip()
             if s:
-                ingredients.append(parse_ingredient_line(s))
+                parsed_ing = parse_ingredient_line(s)
         elif isinstance(ing, dict):
             raw_val = str(ing.get("raw") or "").strip()
             name_val = _clean_ingredient_name(str(ing.get("name") or "").strip())
             if not name_val:
-                ingredients.append(parse_ingredient_line(raw_val))
+                if raw_val:
+                    parsed_ing = parse_ingredient_line(raw_val)
             else:
                 unit_val = str(ing.get("unit") or "").strip().lower()
                 if unit_val in UNIT_ALIASES:
                     unit_val = UNIT_ALIASES[unit_val]
                 elif unit_val.rstrip(".,") in UNIT_ALIASES:
                     unit_val = UNIT_ALIASES[unit_val.rstrip(".,")]
-
-                is_staple = bool(ing.get("staple", False)) or _is_staple_name(name_val)
 
                 qty_val = ing.get("quantity")
                 if qty_val is not None:
@@ -968,6 +1059,18 @@ def extract_with_llm(
                             qty_val = None
                     except (ValueError, TypeError):
                         qty_val = None
+
+                # If LLM left quantity null on an informal spoken phrase (e.g. "box of Texas toast"), reparse raw
+                if qty_val is None and raw_val:
+                    reparsed = parse_ingredient_line(raw_val)
+                    if reparsed["quantity"] is not None:
+                        qty_val = reparsed["quantity"]
+                        if not unit_val and reparsed["unit"]:
+                            unit_val = reparsed["unit"]
+
+                is_staple = bool(ing.get("staple", False)) or _is_staple_name(name_val)
+                if not is_staple and qty_val is None and re.search(r"\bfor\s+greasing\b", raw_val, re.IGNORECASE):
+                    is_staple = True
 
                 if not raw_val:
                     original_name = str(ing.get("name") or "").strip()
@@ -982,13 +1085,39 @@ def extract_with_llm(
                     parts.append(original_name or name_val)
                     raw_val = " ".join(parts)
 
-                ingredients.append({
+                parsed_ing = {
                     "raw": raw_val,
                     "name": name_val,
                     "quantity": qty_val,
                     "unit": unit_val,
                     "staple": is_staple,
-                })
+                }
+
+        if parsed_ing is None or not parsed_ing.get("name"):
+            continue
+        if _is_cookware_name(parsed_ing["name"], parsed_ing.get("raw", "")):
+            continue
+
+        # Deduplicate repeated mentions of the same ingredient name
+        norm_key = parsed_ing["name"].lower().strip()
+        existing = next((x for x in ingredients if x["name"].lower().strip() == norm_key), None)
+        if existing is not None:
+            ex_qty = existing.get("quantity")
+            new_qty = parsed_ing.get("quantity")
+            ex_unit = existing.get("unit", "")
+            new_unit = parsed_ing.get("unit", "")
+            if ex_qty is not None and new_qty is not None and (ex_unit == new_unit or not ex_unit or not new_unit):
+                existing["quantity"] = ex_qty + new_qty
+                if not ex_unit and new_unit:
+                    existing["unit"] = new_unit
+            elif ex_qty is None and new_qty is not None:
+                existing["quantity"] = new_qty
+                if new_unit:
+                    existing["unit"] = new_unit
+            elif ex_qty is not None and new_qty is None and ex_qty < 1.0 and re.search(r"\b(?:extra|more|rest)\b", parsed_ing.get("raw", ""), re.IGNORECASE):
+                existing["quantity"] = 1.0
+        else:
+            ingredients.append(parsed_ing)
 
     # Evaluate review flags
     notes: list[str] = []
@@ -1026,6 +1155,82 @@ def extract_with_llm(
     }
 
 
+_NON_RECIPE_LINK_DOMAINS = (
+    "facebook.com",
+    "fb.com",
+    "fb.watch",
+    "instagram.com",
+    "tiktok.com",
+    "youtube.com",
+    "youtu.be",
+    "vimeo.com",
+    "twitch.tv",
+    "twitter.com",
+    "x.com",
+    "threads.net",
+)
+
+
+def _extract_non_video_urls(text: str) -> list[str]:
+    """Extract candidate webpage URLs embedded in video descriptions/text."""
+    if not text:
+        return []
+    matches = re.findall(r"https?://[^\s<>\"'\)\]}]+", text)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw_u in matches:
+        u = raw_u.rstrip(".,;:!?")
+        if not u or u in seen or is_video_url(u):
+            continue
+        parsed = urllib.parse.urlparse(u)
+        netloc = (parsed.netloc or "").lower().split(":")[0]
+        if any(netloc == d or netloc.endswith("." + d) for d in _NON_RECIPE_LINK_DOMAINS):
+            continue
+        seen.add(u)
+        urls.append(u)
+    return urls
+
+
+def _fetch_html(
+    url: str,
+    http_client: httpx.Client | None = None,
+) -> tuple[str | None, str | None]:
+    """Fetch HTML from a URL, retrying without spoofed browser User-Agent if blocked by WAF/Cloudflare."""
+    try:
+        if http_client is not None:
+            resp = http_client.get(url)
+        else:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=15.0,
+                headers=_DEFAULT_HTTP_HEADERS,
+            ) as client:
+                resp = client.get(url)
+            if resp.status_code in (403, 406, 429):
+                with httpx.Client(
+                    follow_redirects=True,
+                    timeout=15.0,
+                ) as fallback_client:
+                    fallback_resp = fallback_client.get(url)
+                if fallback_resp.status_code < 400:
+                    resp = fallback_resp
+        if resp.status_code >= 400:
+            return (None, f"HTTP {resp.status_code}")
+        return (resp.text, None)
+    except Exception as exc:
+        return (None, str(exc))
+
+
+def _is_complete_jsonld(schema_recipe: dict[str, Any] | None) -> bool:
+    return bool(
+        schema_recipe is not None
+        and schema_recipe.get("title")
+        and schema_recipe.get("title") != "Untitled Recipe"
+        and schema_recipe.get("ingredients")
+        and schema_recipe.get("steps")
+    )
+
+
 def ingest_recipe(
     conn: sqlite3.Connection,
     *,
@@ -1054,11 +1259,35 @@ def ingest_recipe(
                 clean_url, ytdlp_runner=ytdlp_runner, http_client=http_client
             )
             if video_text is not None:
-                extracted = extract_with_llm(
-                    video_text,
-                    fallback_title=title or video_title or clean_url,
-                    llm_client=llm_client,
-                )
+                linked_schema_recipe: dict[str, Any] | None = None
+                linked_page_texts: list[str] = []
+                linked_page_title: str | None = None
+                for linked_url in _extract_non_video_urls(video_text)[:3]:
+                    linked_html, _ = _fetch_html(linked_url, http_client=http_client)
+                    if linked_html is None:
+                        continue
+                    try:
+                        candidate_schema = extract_schema_org_recipe(linked_html)
+                    except Exception:
+                        candidate_schema = None
+                    if _is_complete_jsonld(candidate_schema):
+                        linked_schema_recipe = candidate_schema
+                        break
+                    p_text, p_title = extract_html_text_and_title(linked_html)
+                    if p_text:
+                        linked_page_texts.append(p_text)
+                        if not linked_page_title and p_title:
+                            linked_page_title = p_title
+
+                if linked_schema_recipe is not None:
+                    extracted = linked_schema_recipe
+                else:
+                    combined_video_and_web = "\n\n".join([video_text] + linked_page_texts)
+                    extracted = extract_with_llm(
+                        combined_video_and_web,
+                        fallback_title=title or linked_page_title or video_title or clean_url,
+                        llm_client=llm_client,
+                    )
             else:
                 extracted = {
                     "title": title or video_title or clean_url,
@@ -1070,24 +1299,7 @@ def ingest_recipe(
                     "review_notes": error_note or "Video transcript unavailable",
                 }
     elif clean_url:
-        html_content: str | None = None
-        fetch_error: str | None = None
-        try:
-            if http_client is not None:
-                resp = http_client.get(clean_url)
-            else:
-                with httpx.Client(
-                    follow_redirects=True,
-                    timeout=15.0,
-                    headers=_DEFAULT_HTTP_HEADERS,
-                ) as client:
-                    resp = client.get(clean_url)
-            if resp.status_code >= 400:
-                fetch_error = f"HTTP {resp.status_code}"
-            else:
-                html_content = resp.text
-        except Exception as exc:
-            fetch_error = str(exc)
+        html_content, fetch_error = _fetch_html(clean_url, http_client=http_client)
 
         if html_content is not None:
             schema_recipe = None
@@ -1095,14 +1307,8 @@ def ingest_recipe(
                 schema_recipe = extract_schema_org_recipe(html_content)
             except Exception:
                 schema_recipe = None
-            is_complete_jsonld = (
-                schema_recipe is not None
-                and schema_recipe.get("title")
-                and schema_recipe.get("title") != "Untitled Recipe"
-                and bool(schema_recipe.get("ingredients"))
-                and bool(schema_recipe.get("steps"))
-            )
-            if is_complete_jsonld:
+            if _is_complete_jsonld(schema_recipe):
+                assert schema_recipe is not None
                 extracted = schema_recipe
             else:
                 page_text, page_title = extract_html_text_and_title(html_content)

@@ -123,6 +123,7 @@ def test_add_ingredient_uses_cleaned_item_name(tmp_path):
     assert ing["id"] == ing_id
     assert ing["raw"] == "2 cloves garlic, minced"
     assert ing["item_name"] == "garlic"
+    assert ing["name"] == "garlic"
     assert ing["quantity"] == 2.0
     assert ing["unit"] == "clove"
 

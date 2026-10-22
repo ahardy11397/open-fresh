@@ -22,6 +22,8 @@ export interface InventoryItem {
 
 export interface Ingredient {
   id?: number;
+  item_id?: number;
+  item_name?: string | null;
   raw?: string;
   name?: string | null;
   quantity?: number | null;

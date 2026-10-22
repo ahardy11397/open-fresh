@@ -23,8 +23,14 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
   const [stepsText, setStepsText] = useState(
     Array.isArray(recipe.steps) ? recipe.steps.join("\n") : ""
   );
+  const normalizeIngredients = (list?: Ingredient[]): Ingredient[] =>
+    (list || []).map((ing) => ({
+      ...ing,
+      name: ing.name ?? ing.item_name ?? "",
+    }));
+
   const [ingredients, setIngredients] = useState<Ingredient[]>(
-    recipe.ingredients ? [...recipe.ingredients] : []
+    normalizeIngredients(recipe.ingredients)
   );
   const [reingestText, setReingestText] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -36,7 +42,7 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
     setServings(recipe.servings || 2);
     setTotalTime(recipe.total_time || "");
     setStepsText(Array.isArray(recipe.steps) ? recipe.steps.join("\n") : "");
-    setIngredients(recipe.ingredients ? [...recipe.ingredients] : []);
+    setIngredients(normalizeIngredients(recipe.ingredients));
   }, [recipe]);
 
   useEffect(() => {
@@ -146,7 +152,7 @@ export const RecipeModal: React.FC<RecipeModalProps> = ({
       setServings(updated.servings || 2);
       setTotalTime(updated.total_time || "");
       setStepsText(Array.isArray(updated.steps) ? updated.steps.join("\n") : "");
-      setIngredients(updated.ingredients ? [...updated.ingredients] : []);
+      setIngredients(normalizeIngredients(updated.ingredients));
       setReingestText("");
       onSave(updated, false);
     } catch (err: any) {

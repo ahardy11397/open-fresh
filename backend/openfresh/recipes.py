@@ -113,6 +113,7 @@ def get_recipe(conn: sqlite3.Connection, recipe_id: int) -> dict | None:
             "id": ing["id"],
             "item_id": ing["item_id"],
             "item_name": ing["item_name"],
+            "name": ing["item_name"],
             "raw": ing["raw"],
             "quantity": ing["quantity"],
             "unit": ing["unit"],

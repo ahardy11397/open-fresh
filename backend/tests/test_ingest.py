@@ -1245,6 +1245,316 @@ def test_parse_ingredient_line_real_world_parentheticals_and_dual_units():
     assert r5["staple"] is True
 
 
+def test_parse_ingredient_line_numeric_ranges():
+    r1 = parse_ingredient_line("4-5 cups cooked long-grain white rice or jasmine rice")
+    assert r1["quantity"] == 5.0
+    assert r1["unit"] == "cup"
+    assert r1["name"] == "cooked long-grain white rice or jasmine rice"
+
+    r2 = parse_ingredient_line("2–3 tbsp olive oil")
+    assert r2["quantity"] == 3.0
+    assert r2["unit"] == "tbsp"
+    assert r2["name"] == "olive oil"
+    assert r2["staple"] is True
+
+    r3 = parse_ingredient_line("1 to 2 cloves garlic, minced")
+    assert r3["quantity"] == 2.0
+    assert r3["unit"] == "clove"
+    assert r3["name"] == "garlic"
+
+
+def test_video_url_ingest_follows_recipe_link_in_description(tmp_path):
+    def fake_ytdlp(url):
+        return {
+            "title": "3.5M views | Chicken and Rice Bake",
+            "description": (
+                "This Cheesy Chicken and Rice Bake is layered with fluffy rice.\n\n"
+                "https://badbatchbaking.com/cheesy-chicken-and-rice-bake/\n\n"
+                "#chickenandrice #easymealideas"
+            ),
+            "subtitles": {},
+            "automatic_captions": {},
+        }
+
+    blog_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Recipe",
+        "name": "Cheesy Chicken and Rice Bake Recipe",
+        "recipeYield": "6 servings",
+        "totalTime": "PT1H",
+        "recipeIngredient": [
+          "4-5 cups cooked long-grain white rice",
+          "2 lbs. chicken tenderloins",
+          "6 cloves garlic (minced)"
+        ],
+        "recipeInstructions": [
+          {"@type": "HowToStep", "text": "Cook the rice."},
+          {"@type": "HowToStep", "text": "Season and cook the chicken."},
+          {"@type": "HowToStep", "text": "Assemble and bake for 25 minutes."}
+        ]
+      }
+      </script>
+    </head>
+    <body>Recipe blog post</body>
+    </html>
+    """
+
+    def http_handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://badbatchbaking.com/cheesy-chicken-and-rice-bake/":
+            return httpx.Response(200, text=blog_html)
+        return httpx.Response(404)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(http_handler))
+
+    def llm_handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("LLM should not be called when linked recipe page has complete JSON-LD")
+
+    llm_client = httpx.Client(transport=httpx.MockTransport(llm_handler))
+
+    conn = _fresh_conn(tmp_path)
+    recipe = ingest_recipe(
+        conn,
+        url="https://www.facebook.com/reel/3249065035304025",
+        http_client=http_client,
+        llm_client=llm_client,
+        ytdlp_runner=fake_ytdlp,
+    )
+    assert recipe["title"] == "Cheesy Chicken and Rice Bake Recipe"
+    assert recipe["servings"] == 6
+    assert recipe["total_time"] == "1h"
+    assert recipe["source_url"] == "https://www.facebook.com/reel/3249065035304025"
+    assert recipe["needs_review"] is False
+    assert len(recipe["ingredients"]) == 3
+    assert recipe["ingredients"][0]["quantity"] == 5.0
+    assert recipe["ingredients"][0]["unit"] == "cup"
+    assert len(recipe["steps"]) == 3
+    assert recipe["steps"][0] == "Cook the rice."
+
+
+def test_video_url_ingest_combines_linked_webpage_text_when_no_jsonld(tmp_path):
+    def fake_ytdlp(url):
+        return {
+            "title": "Quick Garlic Noodles Reel",
+            "description": "Full recipe here: https://example.com/garlic-noodles/",
+            "subtitles": {},
+            "automatic_captions": {},
+        }
+
+    blog_html = """
+    <html>
+    <head><title>Garlic Noodles</title></head>
+    <body>
+      <h1>Garlic Noodles</h1>
+      <p>Ingredients: 8 oz spaghetti, 4 cloves garlic, 2 tbsp butter.</p>
+      <p>Step 1: Boil spaghetti. Step 2: Sauté garlic in butter and toss noodles.</p>
+    </body>
+    </html>
+    """
+
+    def http_handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://example.com/garlic-noodles/":
+            return httpx.Response(200, text=blog_html)
+        return httpx.Response(404)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(http_handler))
+
+    def llm_handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        user_prompt = payload["messages"][1]["content"]
+        assert "8 oz spaghetti" in user_prompt
+        assert "Sauté garlic in butter" in user_prompt
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({
+                                "title": "Garlic Noodles",
+                                "servings": 2,
+                                "total_time": "15m",
+                                "ingredients": [
+                                    {"raw": "8 oz spaghetti", "name": "spaghetti", "quantity": 8.0, "unit": "oz", "staple": False},
+                                ],
+                                "steps": ["Boil spaghetti.", "Sauté garlic in butter and toss noodles."],
+                                "low_confidence": False,
+                            }),
+                        }
+                    }
+                ]
+            },
+        )
+
+    llm_client = httpx.Client(transport=httpx.MockTransport(llm_handler))
+
+    conn = _fresh_conn(tmp_path)
+    recipe = ingest_recipe(
+        conn,
+        url="https://www.facebook.com/reel/999999",
+        http_client=http_client,
+        llm_client=llm_client,
+        ytdlp_runner=fake_ytdlp,
+    )
+    assert recipe["title"] == "Garlic Noodles"
+    assert recipe["needs_review"] is False
+    assert len(recipe["ingredients"]) == 1
+    assert len(recipe["steps"]) == 2
+
+
+def test_fetch_html_retries_without_spoofed_headers_on_403(monkeypatch):
+    from openfresh.ingest import _fetch_html
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.headers = kwargs.get("headers")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            calls.append(self.headers)
+            if self.headers is not None:
+                return httpx.Response(403, text="Just a moment...")
+            return httpx.Response(200, text="<html><body>Recipe content</body></html>")
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    html_text, err = _fetch_html("https://badbatchbaking.com/cheesy-chicken-and-rice-bake/")
+    assert err is None
+    assert html_text == "<html><body>Recipe content</body></html>"
+    assert len(calls) == 2
+    assert calls[0] is not None
+    assert calls[1] is None
+
+
+def test_extract_video_text_requested_subtitles_single_track_dict():
+    srt_content = (
+        "1\n"
+        "00:00:00,000 --> 00:00:03,441\n"
+        "First, you're going to\n\n"
+        "2\n"
+        "00:00:03,441 --> 00:00:07,921\n"
+        "cook a whole box of Texas toast.\n"
+    )
+
+    def runner(url):
+        return {
+            "title": "1.2M views · 46K reactions | Poor man chicken parm | Cindy Lou",
+            "description": "Poor man chicken parm",
+            "subtitles": {},
+            "requested_subtitles": {
+                "en_US": {
+                    "url": "https://captions.example.com/reel.srt",
+                    "name": "und",
+                    "ext": "srt",
+                }
+            },
+            "automatic_captions": {
+                "en_US": [
+                    {
+                        "url": "https://captions.example.com/reel.srt",
+                        "name": "und",
+                        "ext": "srt",
+                    }
+                ]
+            },
+        }
+
+    def http_handler(request: httpx.Request) -> httpx.Response:
+        if "reel.srt" in str(request.url):
+            return httpx.Response(200, text=srt_content)
+        return httpx.Response(404)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(http_handler))
+    text, title, error = extract_video_text(
+        "https://www.facebook.com/reel/1727076465108783",
+        ytdlp_runner=runner,
+        http_client=http_client,
+    )
+    assert error is None
+    assert "cook a whole box of Texas toast." in text
+    assert not text.endswith("\n\nsrt")
+
+
+def test_parse_ingredient_line_informal_spoken_quantities_and_containers():
+    r1 = parse_ingredient_line("a whole box of Texas toast")
+    assert r1["quantity"] == 1.0
+    assert r1["unit"] == "box"
+    assert r1["name"] == "Texas toast"
+
+    r2 = parse_ingredient_line("box of Texas toast")
+    assert r2["quantity"] == 1.0
+    assert r2["unit"] == "box"
+    assert r2["name"] == "Texas toast"
+
+    r3 = parse_ingredient_line("a bag of chicken patties")
+    assert r3["quantity"] == 1.0
+    assert r3["unit"] == "bag"
+    assert r3["name"] == "chicken patties"
+
+    r4 = parse_ingredient_line("half a jar of Alfredo sauce")
+    assert r4["quantity"] == 0.5
+    assert r4["unit"] == "jar"
+    assert r4["name"] == "Alfredo sauce"
+
+
+def test_extract_with_llm_filters_cookware_deduplicates_and_reparses_spoken_quantities():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({
+                                "title": "Poor Man Chicken Parm",
+                                "servings": 4,
+                                "total_time": "25m",
+                                "ingredients": [
+                                    {"raw": "box of Texas toast", "name": "Texas toast", "quantity": None, "unit": "", "staple": False},
+                                    {"raw": "a bag of chicken patties", "name": "chicken patties", "quantity": None, "unit": "", "staple": False},
+                                    {"raw": "half a jar of Alfredo sauce", "name": "Alfredo sauce", "quantity": 0.5, "unit": "jar", "staple": False},
+                                    {"raw": "nine by 13 baking pan", "name": "baking pan", "quantity": 1.0, "unit": "", "staple": False},
+                                    {"raw": "extra Alfredo sauce", "name": "Alfredo sauce", "quantity": 0.5, "unit": "jar", "staple": False},
+                                ],
+                                "steps": ["Bake at 350 until bubbly."],
+                                "low_confidence": False,
+                            }),
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    res = extract_with_llm("spoken transcript", llm_client=client)
+    names = [i["name"].lower() for i in res["ingredients"]]
+    assert "baking pan" not in names
+    assert names == ["texas toast", "chicken patties", "alfredo sauce"]
+    by_name = {i["name"].lower(): i for i in res["ingredients"]}
+    assert by_name["texas toast"]["quantity"] == 1.0
+    assert by_name["texas toast"]["unit"] == "box"
+    assert by_name["chicken patties"]["quantity"] == 1.0
+    assert by_name["chicken patties"]["unit"] == "bag"
+    assert by_name["alfredo sauce"]["quantity"] == 1.0
+    assert by_name["alfredo sauce"]["unit"] == "jar"
+    assert res["needs_review"] is False
+
+
+
+
+
 
 
 
