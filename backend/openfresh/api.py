@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from datetime import date, timedelta
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from openfresh import (
@@ -24,6 +24,7 @@ from openfresh import (
     listgen,
     planner,
     pricing,
+    receipts,
     recipes,
     settings,
 )
@@ -156,6 +157,44 @@ class SettingsPut(BaseModel):
     value: str
 
 
+class ReceiptCommitItem(BaseModel):
+    name: str
+    category: str | None = None
+    location: str = "pantry"
+    quantity: float = 1.0
+    unit: str = ""
+    price: float = 0.0
+    include_inventory: bool = True
+    include_price: bool = True
+
+
+class ReceiptCommitBody(BaseModel):
+    date: str
+    currency: str = "USD"
+    record_spend: bool = True
+    total_spend: float = 0.0
+    items: list[ReceiptCommitItem] = Field(default_factory=list)
+
+
+class _TransactionProxy:
+    """Connection proxy that suppresses inner commits for transaction isolation."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        object.__setattr__(self, "_conn", conn)
+
+    def commit(self) -> None:
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_conn":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+
 def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRouter:
     router = APIRouter()
 
@@ -206,8 +245,18 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
     # --- inventory ----------------------------------------------------------
 
     @router.get("/inventory")
-    def get_inventory(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-        return inventory.get_all(conn)
+    def get_inventory(
+        location: str | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> list[dict]:
+        rows = inventory.get_all(conn)
+        res = []
+        for r in rows:
+            d = dict(r)
+            d["name"] = d["item_name"]
+            if location is None or d["location"] == location:
+                res.append(d)
+        return res
 
     @router.post("/inventory")
     def post_inventory(
@@ -515,6 +564,14 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
 
     # --- budget ---------------------------------------------------------------
 
+    @router.get("/budget")
+    def get_budget_query(
+        week_start: date | None = None,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict:
+        ws = week_start.isoformat() if week_start else current_week_start()
+        return budget.week_summary(conn, ws)
+
     @router.get("/budget/{week_start}")
     def get_budget(
         week_start: date, conn: sqlite3.Connection = Depends(get_conn)
@@ -620,5 +677,96 @@ def build_router(get_conn: Callable[[], Iterator[sqlite3.Connection]]) -> APIRou
                 )
         settings.set_setting(conn, body.key, body.value)
         return ok()
+
+    # --- receipts -------------------------------------------------------------
+
+    @router.post("/receipts/parse")
+    def post_receipt_parse(
+        file: UploadFile = File(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        try:
+            file_bytes = file.file.read()
+            filename = file.filename or "receipt.jpg"
+            text = receipts.extract_text(file_bytes, filename)
+            parsed = receipts.parse_receipt_data(text)
+            enriched = receipts.enrich_receipt_items(conn, parsed)
+            return enriched
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/receipts/commit")
+    def post_receipt_commit(
+        body: ReceiptCommitBody,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, Any]:
+        inventory_items_added = 0
+        prices_updated = 0
+        spend_recorded = 0.0
+
+        conn.execute("SAVEPOINT receipt_commit")
+        proxy = _TransactionProxy(conn)
+        try:
+            for item in body.items:
+                loc = (item.location or "pantry").strip().lower()
+                if loc not in ("pantry", "fridge", "freezer"):
+                    loc = "pantry"
+
+                item_id: int | None = None
+                if item.include_inventory or item.include_price:
+                    item_id = items.get_or_create(
+                        proxy, item.name, category=item.category
+                    )
+
+                if item.include_inventory and item_id is not None:
+                    inventory.add_item(
+                        proxy,
+                        item_id,
+                        loc,
+                        max(0.0, float(item.quantity)),
+                        unit=item.unit,
+                        source="receipt",
+                    )
+                    inventory_items_added += 1
+
+                if item.include_price and item_id is not None:
+                    pricing.record_own_price(
+                        proxy,
+                        item_id,
+                        max(0.0, float(item.price)),
+                        body.currency,
+                        body.date,
+                        package_quantity=float(item.quantity) if item.quantity > 0 else 1.0,
+                        package_unit=item.unit,
+                        source="receipt",
+                    )
+                    prices_updated += 1
+
+            if body.record_spend and body.total_spend > 0:
+                budget.record_spend(
+                    proxy,
+                    item_id=None,
+                    price=float(body.total_spend),
+                    currency=body.currency,
+                    date=body.date,
+                    source="receipt",
+                )
+                spend_recorded = float(body.total_spend)
+
+            conn.execute("RELEASE SAVEPOINT receipt_commit")
+            conn.commit()
+        except Exception as exc:
+            conn.execute("ROLLBACK TO SAVEPOINT receipt_commit")
+            conn.execute("RELEASE SAVEPOINT receipt_commit")
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return {
+            "status": "ok",
+            "inventory_items_added": inventory_items_added,
+            "prices_updated": prices_updated,
+            "spend_recorded": spend_recorded,
+        }
 
     return router
