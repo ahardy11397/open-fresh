@@ -7,17 +7,22 @@ import type {
   PlanEntry,
   GroceryLine,
   BudgetSummary,
+  ReceiptParsedData,
+  ReceiptCommitPayload,
+  ReceiptCommitResponse,
 } from "../types";
 import { getMonday } from "../utils/date";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers = {
-    "Content-Type": "application/json",
-    ...options.headers,
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers: Record<string, string> = {
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...(options.headers as Record<string, string>),
   };
   const response = await fetch(path, {
     ...options,
-    headers,
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
   });
   if (!response.ok) {
     let errMessage = `HTTP ${response.status}: ${response.statusText}`;
@@ -270,6 +275,22 @@ export const api = {
     return request<{ ok: boolean }>("/prices/estimate", {
       method: "POST",
       body: JSON.stringify(body),
+    });
+  },
+
+  parseReceipt(file: File): Promise<ReceiptParsedData> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<ReceiptParsedData>("/receipts/parse", {
+      method: "POST",
+      body: formData,
+    });
+  },
+
+  commitReceipt(payload: ReceiptCommitPayload): Promise<ReceiptCommitResponse> {
+    return request<ReceiptCommitResponse>("/receipts/commit", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 };

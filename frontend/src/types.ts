@@ -97,3 +97,49 @@ export type ViewTab =
   | "kitchen"
   | "budget"
   | "settings";
+
+export interface ReceiptItem {
+  raw_name?: string;
+  name: string;
+  matched_item_id?: number | null;
+  suggested_location?: "pantry" | "fridge" | "freezer";
+  quantity: number;
+  unit?: string;
+  price: number;
+  category?: string | null;
+  include?: boolean;
+}
+
+export interface ReceiptParsedData {
+  store: string;
+  date: string;
+  total: number;
+  currency: string;
+  items: ReceiptItem[];
+}
+
+export interface ReceiptCommitItem {
+  name: string;
+  category?: string | null;
+  location: "pantry" | "fridge" | "freezer";
+  quantity: number;
+  unit?: string;
+  price: number;
+  include_inventory: boolean;
+  include_price: boolean;
+}
+
+export interface ReceiptCommitPayload {
+  date: string;
+  currency: string;
+  record_spend: boolean;
+  total_spend: number;
+  items: ReceiptCommitItem[];
+}
+
+export interface ReceiptCommitResponse {
+  status: string;
+  inventory_items_added: number;
+  prices_updated: number;
+  spend_recorded: number;
+}
