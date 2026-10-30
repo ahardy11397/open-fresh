@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any
 
 import httpx
@@ -445,4 +446,233 @@ def parse_receipt_data(text: str, client: httpx.Client | None = None) -> dict[st
     if walmart_result is not None and walmart_result.get("items"):
         return walmart_result
     return parse_receipt_with_llm(text, client=client)
+
+
+NON_FOOD_RE = re.compile(
+    r"\b("
+    r"motor\s*oil|engine\s*oil|brake\s*fluid|antifreeze|wiper\s*fluid|"
+    r"batter(?:y|ies)|"
+    r"paper\s*towels?|toilet\s*paper|bath\s*tissue|facial\s*tissue|kleenex|napkins?|"
+    r"detergents?|fabric\s*softener|bleach|dishwasher|"
+    r"trash\s*bags?|garbage\s*bags?|"
+    r"(?:aluminum\s+)?foil|plastic\s*wrap|cling\s*wrap|ziploc|storage\s*bags?|"
+    r"(?:dish|hand|bar)?\s*soaps?|shampoos?|conditioners?|body\s*wash|deodorant|"
+    r"toothpastes?|toothbrush(?:es)?|dental\s*floss|"
+    r"light\s*bulbs?|cleaners?|disinfectant|wipes?|hardware"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FREEZER_RE = re.compile(
+    r"\b("
+    r"ice\s*cream|frozen|pizzas?|popsicles?|ice\s*pops?|gelato|sorbets?|waffles?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FRIDGE_EXCLUDE_RE = re.compile(
+    r"\b("
+    r"(?:peanut|almond|apple|cookie|cocoa|shea)\s+butter|"
+    r"nutmeg|graham(?:\s+crackers?)?|"
+    r"cream\s+of\s+(?:mushroom|chicken|celery)|shaving\s+cream"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FRIDGE_MEAT_RE = re.compile(
+    r"\b("
+    r"meats?|beef|chickens?|pork|fish(?:es)?|seafood|salmon|tuna|turkey|"
+    r"bacon|sausages?|hams?|steaks?|ribeye|patt(?:y|ies)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FRIDGE_DAIRY_RE = re.compile(
+    r"\b("
+    r"\w*milks?|dairy|yog[h]?urts?|\w*cheese(?:s)?|butter|"
+    r"(?:sour\s+)?cream|cottage\s+cheese|eggs?|tofu|hummus|guacamole|salsa|mayo(?:nnaise)?|refrigerated"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FRIDGE_PRODUCE_RE = re.compile(
+    r"\b("
+    r"produce|\w*berr(?:y|ies)|salads?|lettuce|spinach|kale|celery|cucumbers?|"
+    r"carrots?|broccoli|cauliflower|asparagus|mushrooms?|avocados?|"
+    r"tomatoes?|bananas?|apples?|oranges?|grapes?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+PANTRY_BAKERY_RE = re.compile(
+    r"\b("
+    r"breads?|bagels?|tortillas?|buns?|bakery|croissants?|muffins?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+PANTRY_BEVERAGE_RE = re.compile(
+    r"\b("
+    r"juices?|sodas?|coffee|tea|beverages?|drinks?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+PANTRY_DRY_RE = re.compile(
+    r"\b("
+    r"pastas?|rice|beans?|cereals?|flour|sugar|oils?|sauces?|soups?|canned|"
+    r"spices?|snacks?|chips?|crackers?|cookies?|nuts?|oats|peanut\s+butter"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _find_item_match(
+    conn: sqlite3.Connection, name: str, raw_name: str
+) -> tuple[int | None, str | None]:
+    """Find matched item_id and category from item_aliases and items tables."""
+    def _norm(s: str) -> str:
+        return " ".join(s.split()).lower()
+
+    candidates: list[str] = []
+    norm_n = _norm(name)
+    if norm_n:
+        candidates.append(norm_n)
+    norm_r = _norm(raw_name)
+    if norm_r and norm_r not in candidates:
+        candidates.append(norm_r)
+
+    # 1. Alias match takes precedence
+    for cand in candidates:
+        row = conn.execute(
+            "SELECT item_id FROM item_aliases WHERE alias = ? OR LOWER(alias) = ?",
+            (cand, cand),
+        ).fetchone()
+        if row is not None:
+            item_id = row[0]
+            cat_row = conn.execute(
+                "SELECT category FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+            category = cat_row[0] if cat_row is not None and cat_row[0] else None
+            return (item_id, category)
+
+    # 2. Exact items name match
+    for cand in candidates:
+        row = conn.execute(
+            "SELECT id, category FROM items WHERE name = ? OR LOWER(name) = ?",
+            (cand, cand),
+        ).fetchone()
+        if row is not None:
+            item_id = row[0]
+            category = row[1] if row[1] else None
+            return (item_id, category)
+
+    return (None, None)
+
+
+def _find_prior_location(conn: sqlite3.Connection, item_id: int) -> str | None:
+    """Find prior storage location for an item from inventory or events."""
+    row = conn.execute(
+        "SELECT location FROM inventory WHERE item_id = ? "
+        "ORDER BY (quantity > 0) DESC, updated_at DESC, id DESC LIMIT 1",
+        (item_id,),
+    ).fetchone()
+    if row is not None and row[0]:
+        loc = str(row[0]).lower().strip()
+        if loc in {"pantry", "fridge", "freezer"}:
+            return loc
+
+    ev_row = conn.execute(
+        "SELECT location FROM inventory_events "
+        "WHERE item_id = ? AND location IN ('pantry', 'fridge', 'freezer') "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (item_id,),
+    ).fetchone()
+    if ev_row is not None and ev_row[0]:
+        loc = str(ev_row[0]).lower().strip()
+        if loc in {"pantry", "fridge", "freezer"}:
+            return loc
+
+    return None
+
+
+def _infer_heuristics(
+    name: str, raw_name: str, category: str | None
+) -> tuple[str, str | None, bool]:
+    """Infer (suggested_location, category, include) based on text patterns."""
+    text = f"{name} {raw_name} {category or ''}".lower()
+
+    # Check non-food exclusion first
+    if NON_FOOD_RE.search(text):
+        return ("pantry", category or "household", False)
+
+    # Check freezer keywords next (e.g. "frozen pizza", "ice cream", "frozen chicken")
+    if FREEZER_RE.search(text):
+        return ("freezer", category or "frozen", True)
+
+    # Check fridge keywords (unless explicitly excluded, e.g. peanut butter, nutmeg)
+    if not FRIDGE_EXCLUDE_RE.search(text):
+        if FRIDGE_MEAT_RE.search(text):
+            return ("fridge", category or "meat", True)
+        if FRIDGE_DAIRY_RE.search(text):
+            return ("fridge", category or "dairy", True)
+        if FRIDGE_PRODUCE_RE.search(text):
+            return ("fridge", category or "produce", True)
+
+    # Check pantry categories
+    if PANTRY_BAKERY_RE.search(text):
+        return ("pantry", category or "bakery", True)
+    if PANTRY_BEVERAGE_RE.search(text):
+        return ("pantry", category or "beverages", True)
+    if PANTRY_DRY_RE.search(text):
+        return ("pantry", category or "pantry", True)
+
+    # Default fallback
+    return ("pantry", category, True)
+
+
+def enrich_receipt_items(
+    conn: sqlite3.Connection, parsed: dict[str, Any]
+) -> dict[str, Any]:
+    """Enrich receipt line items with database matching and location heuristics.
+
+    Adds `matched_item_id`, `suggested_location`, `category`, and `include`
+    to each line item in `parsed['items']`.
+    """
+    result = dict(parsed)
+    raw_items = parsed.get("items") or []
+    enriched_items: list[dict[str, Any]] = []
+
+    for item in raw_items:
+        enriched = dict(item)
+        name = str(enriched.get("name") or enriched.get("raw_name") or "").strip()
+        raw_name = str(enriched.get("raw_name") or enriched.get("name") or "").strip()
+
+        matched_id, db_category = _find_item_match(conn, name, raw_name)
+        category = db_category or enriched.get("category")
+
+        prior_location = _find_prior_location(conn, matched_id) if matched_id is not None else None
+
+        inferred_loc, inferred_cat, inferred_include = _infer_heuristics(name, raw_name, category)
+
+        # Prior inventory location beats keyword heuristic
+        suggested_location = prior_location or inferred_loc
+
+        # If non-food matched, include is False; otherwise preserve or default to True
+        if not inferred_include:
+            include = False
+        else:
+            include = bool(enriched.get("include", True))
+
+        final_category = category or inferred_cat
+
+        enriched["matched_item_id"] = matched_id
+        enriched["suggested_location"] = suggested_location
+        enriched["category"] = final_category
+        enriched["include"] = include
+        enriched_items.append(enriched)
+
+    result["items"] = enriched_items
+    return result
+
 
