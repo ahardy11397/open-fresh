@@ -93,17 +93,89 @@ EXCLUDED_LINE_PREFIXES = (
 )
 
 WALMART_ITEM_RE = re.compile(
-    r"^(?P<raw_name>[A-Za-z0-9\s/&%.'#*+-]+?)\s+"
+    r"^(?P<raw_name>.+?)\s+"
     r"(?P<upc>\d{6,14})\s+"
     r"(?P<price>-?\d+\.\d{2})"
     r"(?:\s+(?P<flag>[A-Za-z0-9]))?\s*$"
 )
 
 WALMART_ITEM_NO_UPC_RE = re.compile(
-    r"^(?P<raw_name>[A-Za-z0-9\s/&%.'#*+-]+?)\s+"
+    r"^(?P<raw_name>.+?)\s+"
     r"(?P<price>-?\d+\.\d{2})\s+"
     r"(?P<flag>[FTNXOY])\s*$"
 )
+
+WALMART_ONLINE_ITEM_RE = re.compile(
+    r"^(?P<raw_name>.+?)"
+    r"(?:\s+\d+\s+(?:shopped|weight adjusted|substituted))?"
+    r"\s+(?:Qty\s*:?|x)\s*(?P<qty>\d+(?:\.\d+)?)\s+\$?(?P<price>\d+\.\d{2})\s*$",
+    re.IGNORECASE,
+)
+
+GENERIC_ITEM_RE = re.compile(
+    r"^(?P<raw_name>.+?)\s+"
+    r"(?:(?:Qty\s*:?|x)\s*(?P<qty>\d+(?:\.\d+)?)\s+)?\$?(?P<price>\d+\.\d{2})\s*$",
+    re.IGNORECASE,
+)
+
+GENERIC_EXCLUDED_PREFIXES = (
+    "subtotal",
+    "total",
+    "tax",
+    "balance",
+    "cash",
+    "visa",
+    "mastercard",
+    "amex",
+    "discover",
+    "debit",
+    "credit",
+    "tender",
+    "change",
+    "savings",
+    "discount",
+    "tip",
+    "order#",
+    "order #",
+    "invoice",
+    "buyer",
+    "store",
+    "delivery",
+    "shipping",
+    "fees",
+    "fee",
+    "shopped",
+    "driver tip",
+    "free delivery",
+    "http",
+    "www.",
+)
+
+MONTH_MAP = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
 
 WEIGHED_LINE_RE = re.compile(
     r"^\s*(\d+(?:\.\d+)?)\s*(lb|lbs|kg|g|oz)\s*@\s*",
@@ -177,14 +249,25 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
 def _extract_receipt_date(text: str) -> str:
     """Extract receipt date formatted as YYYY-MM-DD from raw text."""
-    # 1. YYYY-MM-DD
+    # 1. Textual month e.g. Oct 29, 2026 or October 29, 2026
+    m_text = re.search(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(20\d{2})\b", text)
+    if m_text:
+        mon_str = m_text.group(1).lower()
+        if mon_str in MONTH_MAP:
+            m = MONTH_MAP[mon_str]
+            d = int(m_text.group(2))
+            y = int(m_text.group(3))
+            if 1 <= d <= 31:
+                return f"{y:04d}-{m:02d}-{d:02d}"
+
+    # 2. YYYY-MM-DD
     m_iso = re.search(r"\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b", text)
     if m_iso:
         y, m, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
         if 1 <= m <= 12 and 1 <= d <= 31:
             return f"{y:04d}-{m:02d}-{d:02d}"
 
-    # 2. MM/DD/YYYY or MM-DD-YYYY
+    # 3. MM/DD/YYYY or MM-DD-YYYY
     m_us4 = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b", text)
     if m_us4:
         m, d, y = int(m_us4.group(1)), int(m_us4.group(2)), int(m_us4.group(3))
@@ -193,7 +276,7 @@ def _extract_receipt_date(text: str) -> str:
         if 1 <= d <= 12 and 1 <= m <= 31:
             return f"{y:04d}-{d:02d}-{m:02d}"
 
-    # 3. MM/DD/YY or MM-DD-YY
+    # 4. MM/DD/YY or MM-DD-YY
     m_us2 = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})\b", text)
     if m_us2:
         m, d, y2 = int(m_us2.group(1)), int(m_us2.group(2)), int(m_us2.group(3))
@@ -215,14 +298,20 @@ def _clean_item_name_and_unit(raw_name: str) -> tuple[str, str]:
 
     unit = ""
     m_pkg = re.search(
-        r"\b(\d+(?:\.\d+)?)\s*(FL\.?\s*OZ\.?|OZ\.?|GAL(?:LON)?|LB|LBS|CT|PK|PKG|PT|QT|G|KG|ML|L)\b\s*$",
+        r"\b(\d+(?:\.\d+)?)\s*(FL\.?\s*OZ|OZ|GAL(?:LON)?|LB|LBS|CT|COUNT|PK|PKG|PT|QT|G|KG|ML|L)\b\.?"
+        r"(?:\s*(?:JAR|BOTTLE|CARTON|TRAY|CONTAINER|BOX|BAG|TUB|PACK|CAN|CANS|BLOCK|\(FROZEN\)))?\s*$",
         s,
         re.IGNORECASE,
     )
+    is_frozen = bool(re.search(r"\(frozen\)", s, re.IGNORECASE))
     if m_pkg:
         unit_raw = m_pkg.group(2).lower().replace(".", "").strip()
         unit = UNIT_NORMALIZATION.get(unit_raw, unit_raw)
         s = s[: m_pkg.start()].strip()
+
+    s = s.rstrip(", -")
+    if is_frozen and not re.search(r"\(frozen\)", s, re.IGNORECASE):
+        s += " (Frozen)"
 
     cleaned_name = " ".join(s.split())
     if cleaned_name.isupper() or cleaned_name.islower():
@@ -300,6 +389,26 @@ def parse_walmart_receipt_text(text: str) -> dict[str, Any] | None:
                 "unit": unit,
                 "price": price_val,
             })
+            continue
+
+        # Try online order item format (e.g. "Item name Qty 1 $2.82")
+        m_online = WALMART_ONLINE_ITEM_RE.match(line)
+        if m_online:
+            raw_name = m_online.group("raw_name").strip()
+            price_val = float(m_online.group("price"))
+            qty_val = float(m_online.group("qty"))
+            if price_val < 0 or any(kw in raw_name.lower() for kw in ("coupon", "discount", "savings")):
+                continue
+
+            cleaned_name, unit = _clean_item_name_and_unit(raw_name)
+            items.append({
+                "raw_name": raw_name,
+                "name": cleaned_name,
+                "quantity": qty_val,
+                "unit": unit,
+                "price": price_val,
+            })
+            continue
 
     if not items:
         return None
@@ -316,6 +425,84 @@ def parse_walmart_receipt_text(text: str) -> dict[str, Any] | None:
         "currency": "USD",
         "items": items,
     }
+
+
+def parse_generic_receipt_text(text: str) -> dict[str, Any] | None:
+    """Parse receipt text using generic line-item heuristics.
+
+    Acts as a resilient fallback for non-Walmart receipts or when LLM is unavailable.
+    """
+    if not text or not text.strip():
+        return None
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+
+    items: list[dict[str, Any]] = []
+    total: float | None = None
+    detected_store = "Unknown Store"
+
+    for i, line in enumerate(lines):
+        # Look for store name in early header lines
+        if i < 4 and detected_store == "Unknown Store":
+            for known in ("Walmart", "Trader Joe's", "Kroger", "Target", "Aldi", "Costco", "Publix", "Whole Foods", "Safeway", "Meijer", "HEB"):
+                if known.lower() in line.lower():
+                    detected_store = known
+                    break
+
+        # Check total
+        m_tot = re.match(
+            r"^(?:GRAND\s+|FINAL\s+)?TOTAL(?:\s+(?:PURCHASE|SALE|DUE))?:?\s*(?:\$\s*)?(\d+\.\d{2})",
+            line,
+            re.IGNORECASE,
+        )
+        if m_tot and not line.lower().startswith(("subtotal", "total tax")):
+            total = float(m_tot.group(1))
+            continue
+
+        line_lower = line.lower()
+        if any(line_lower.startswith(p) for p in GENERIC_EXCLUDED_PREFIXES):
+            continue
+
+        m_item = GENERIC_ITEM_RE.match(line)
+        if m_item:
+            raw_name = m_item.group("raw_name").strip()
+            price_val = float(m_item.group("price"))
+            qty_raw = m_item.group("qty")
+            qty_val = float(qty_raw) if qty_raw else 1.0
+
+            # Ignore lines that look like payment, tax, or have no alphabetic letters
+            if price_val <= 0 or not re.search(r"[A-Za-z]{2,}", raw_name):
+                continue
+            if any(kw in raw_name.lower() for kw in ("coupon", "discount", "savings", "subtotal", "tax", "total", "driver tip")):
+                continue
+
+            cleaned_name, unit = _clean_item_name_and_unit(raw_name)
+            items.append({
+                "raw_name": raw_name,
+                "name": cleaned_name,
+                "quantity": qty_val,
+                "unit": unit,
+                "price": price_val,
+            })
+
+    if not items:
+        return None
+
+    if total is None:
+        total = round(sum(i["price"] for i in items), 2)
+
+    date_str = _extract_receipt_date(text)
+
+    return {
+        "store": detected_store,
+        "date": date_str,
+        "total": total,
+        "currency": "USD",
+        "items": items,
+    }
+
 
 
 def parse_receipt_with_llm(text: str, client: httpx.Client | None = None) -> dict[str, Any]:
@@ -440,12 +627,31 @@ def parse_receipt_data(text: str, client: httpx.Client | None = None) -> dict[st
     """Parse receipt text into structured receipt data.
 
     Tries deterministic Walmart heuristics first; if no items are found,
-    falls back to LLM extraction.
+    attempts LLM extraction, and falls back to generic line-item heuristics.
     """
     walmart_result = parse_walmart_receipt_text(text)
-    if walmart_result is not None and walmart_result.get("items"):
+    if walmart_result is not None and len(walmart_result.get("items", [])) > 0:
         return walmart_result
-    return parse_receipt_with_llm(text, client=client)
+
+    generic_result = parse_generic_receipt_text(text)
+
+    try:
+        llm_result = parse_receipt_with_llm(text, client=client)
+        if llm_result is not None and len(llm_result.get("items", [])) > 0:
+            return llm_result
+    except Exception:
+        pass
+
+    if generic_result is not None and len(generic_result.get("items", [])) > 0:
+        return generic_result
+
+    return {
+        "store": "Unknown",
+        "date": _extract_receipt_date(text),
+        "total": 0.0,
+        "currency": "USD",
+        "items": [],
+    }
 
 
 NON_FOOD_RE = re.compile(

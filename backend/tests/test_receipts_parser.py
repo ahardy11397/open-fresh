@@ -2,6 +2,7 @@ import httpx
 import pytest
 from openfresh.receipts import (
     parse_walmart_receipt_text,
+    parse_generic_receipt_text,
     parse_receipt_with_llm,
     parse_receipt_data,
 )
@@ -165,3 +166,81 @@ def test_parse_receipt_data_falls_back_to_llm():
     assert called is True
     assert res["store"] == "Target"
     assert len(res["items"]) == 1
+
+
+def test_parse_walmart_online_order_pdf_format():
+    sample_invoice = """
+Invoice
+Oct 29, 2026 order
+Order# 1234567-89012345
+
+Great Value Butter Flavor Flaky Jumbo Biscuits, 16 oz, 8 Count 51 shopped Qty 2 $3.92
+Classico Four Cheese Alfredo Pasta Sauce, 15 oz. Jar 51 shopped Qty 1 $2.88
+Great Value Steamable Fine Green Beans, 12 oz (Frozen) 51 shopped Qty 1 $1.97
+Fresh Banana, Each 6 weight adjusted Qty 5 $0.77
+
+Subtotal $9.54
+Taxes $0.46
+Total $10.00
+"""
+    res = parse_walmart_receipt_text(sample_invoice)
+    assert res is not None
+    assert res["store"] == "Walmart"
+    assert res["date"] == "2026-10-29"
+    assert res["total"] == 10.00
+    assert len(res["items"]) == 4
+
+    # Verify banana with Qty 5
+    banana = next(i for i in res["items"] if "Banana" in i["name"])
+    assert banana["quantity"] == 5.0
+    assert banana["price"] == 0.77
+
+    # Verify frozen green beans
+    beans = next(i for i in res["items"] if "Green Beans" in i["name"])
+    assert beans["unit"] == "oz"
+    assert "(Frozen)" in beans["name"]
+
+
+def test_parse_generic_receipt_text():
+    sample = """
+Target Store #1024
+10/15/2026
+
+ORGANIC MILK 1 GAL        Qty 1 $4.29
+WHOLE WHEAT BREAD 20 OZ   $2.49
+APPLES 3 LB BAG           Qty 1 $3.99
+
+SUBTOTAL                  $10.77
+TAX                       $0.65
+TOTAL                     $11.42
+"""
+    res = parse_generic_receipt_text(sample)
+    assert res is not None
+    assert res["store"] == "Target"
+    assert res["date"] == "2026-10-15"
+    assert res["total"] == 11.42
+    assert len(res["items"]) == 3
+    assert any(i["price"] == 4.29 for i in res["items"])
+
+
+def test_parse_receipt_data_falls_back_to_generic_when_llm_fails():
+    sample = """
+Aldi Market
+09/20/2026
+
+Almond Milk 64 oz         $2.99
+Cheddar Cheese 8 oz       $1.89
+
+Total                     $4.88
+"""
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    client = httpx.Client(transport=httpx.MockTransport(failing_handler))
+    res = parse_receipt_data(sample, client=client)
+    assert res is not None
+    assert res["store"] == "Aldi"
+    assert res["date"] == "2026-09-20"
+    assert res["total"] == 4.88
+    assert len(res["items"]) == 2
