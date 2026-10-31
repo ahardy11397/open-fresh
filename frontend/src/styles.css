@@ -1385,3 +1385,263 @@ button {
   gap: 1rem;
   margin-top: 0.5rem;
 }
+
+/* Receipt Review Modal */
+.receipt-modal-content {
+  max-width: 920px;
+  width: 95%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-subtitle {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+.receipt-modal-body {
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.review-error-alert {
+  background-color: #fef2f2;
+  border-left-color: var(--color-danger);
+  color: #991b1b;
+}
+
+.review-error-alert .alert-badge {
+  background-color: var(--color-danger);
+  color: #ffffff;
+}
+
+.receipt-header-section {
+  background-color: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+}
+
+.receipt-header-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.currency-input-group {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.receipt-total-input {
+  flex: 1;
+}
+
+.receipt-currency-input {
+  width: 70px;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.checkbox-form-group {
+  display: flex;
+  align-items: center;
+  padding-bottom: 0.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+.receipt-items-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.receipt-table-container {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.receipt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.receipt-table th {
+  background-color: #f1f5f9;
+  padding: 0.65rem 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.receipt-table td {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.receipt-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.receipt-table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.receipt-row-excluded {
+  opacity: 0.5;
+  background-color: #f9fafb;
+}
+
+.th-include, .td-include {
+  width: 40px;
+  text-align: center;
+}
+
+.td-include input[type="checkbox"] {
+  cursor: pointer;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--color-primary);
+}
+
+.th-item, .td-item {
+  min-width: 180px;
+}
+
+.receipt-input-name {
+  width: 100%;
+}
+
+.th-location, .td-location {
+  width: 120px;
+}
+
+.receipt-select-location {
+  width: 100%;
+}
+
+.th-qty, .td-qty {
+  width: 80px;
+}
+
+.receipt-input-qty {
+  width: 100%;
+}
+
+.th-unit, .td-unit {
+  width: 80px;
+}
+
+.receipt-input-unit {
+  width: 100%;
+}
+
+.th-price, .td-price {
+  width: 95px;
+}
+
+.receipt-input-price {
+  width: 100%;
+}
+
+.th-actions, .td-actions {
+  width: 40px;
+  text-align: center;
+}
+
+.btn-danger-icon {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.btn-danger-icon:hover {
+  color: var(--color-danger);
+  background-color: #fee2e2;
+}
+
+.receipt-empty-state {
+  text-align: center;
+  padding: 2rem !important;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.receipt-items-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .receipt-modal-content {
+    width: 100%;
+    height: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .receipt-header-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .receipt-items-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+}
+
